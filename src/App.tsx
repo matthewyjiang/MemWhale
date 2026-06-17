@@ -276,7 +276,10 @@ function App() {
     <main className="shell">
       <aside className="sidebar" aria-label="Sources and import">
         <div className="brand">
-          <div className="brand-mark">MW</div>
+          <div className="brand-mark" role="img" aria-label="MemoryWhale whale mark">
+            <span className="whale-body" />
+            <span className="whale-tail" />
+          </div>
           <div>
             <h1>MemoryWhale</h1>
             <p>Local knowledge galaxy</p>
