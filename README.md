@@ -118,6 +118,24 @@ The goal is simple: make the terminal feel like it has long-term memory, so I
 can search old attempts, recover exact errors after shutdowns, and give an AI
 agent enough history to continue debugging instead of starting over.
 
+## Attribution and Learning Sources
+
+MemoryWhale was built after studying two original projects:
+
+- **CodeWhale** by **Hmbown**: <https://github.com/Hmbown/CodeWhale>
+- **MemPalace** by the **MemPalace project**: <https://github.com/MemPalace/mempalace>
+
+CodeWhale helped me understand how a Rust-first developer tool can organize
+terminal workflows, command execution, safety boundaries, and agent-facing
+runtime ideas. MemPalace helped me understand local-first memory: keeping
+technical context private, searchable, durable, and useful across sessions.
+
+MemoryWhale is my own project built from those lessons. It focuses specifically
+on terminal command memory, error logs, notes, and debugging continuity for
+work that moves between machines, such as Jetson and local robotics
+development. The clean MemoryWhale branch does not vendor those repositories;
+it credits them as the projects that taught me the core ideas behind this one.
+
 ## How I Use It
 
 I import project notes, paste important terminal output, and save command runs
