@@ -96,14 +96,16 @@ from the command, arguments, and error text.
 ## Why I Built It
 
 I was running the same robotics repo on two different machines: a Jetson and my
-local computer for USC AUV work. The codebase was shared, but the terminal
-history was not. Commands, errors, build logs, and debugging attempts lived on
-whichever machine happened to run them.
+local computer for USC Autonomous Underwater Vehicle work. The codebase was
+shared, but the terminal history was not. Commands, errors, build logs, and
+debugging attempts lived on whichever machine happened to run them.
 
-That became a real problem for AI-assisted debugging. If the terminal shut down,
-the machine changed, or the scrollback disappeared, the agent lost the exact
-context it needed: what command was run, what flags were used, what error came
-back, and what had already been tried.
+That became a real problem for AI-assisted debugging and team collaboration. If
+a teammate asked why something failed, I could not always retrieve the last
+terminal section that explained it. If the terminal shut down, the machine
+changed, or the scrollback disappeared, the exact context disappeared with it:
+what command was run, what flags were used, what error came back, and what had
+already been tried.
 
 MemoryWhale is built to remember what I put into it:
 
