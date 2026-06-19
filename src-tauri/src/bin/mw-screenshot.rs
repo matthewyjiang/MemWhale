@@ -52,7 +52,9 @@ fn run() -> Result<(), String> {
             "--cwd" => cwd = args.next(),
             "--output" | "-o" => output_override = args.next(),
             value if value.starts_with("--") => {
-                return Err(format!("unknown option {value:?}; run mw-screenshot --help"));
+                return Err(format!(
+                    "unknown option {value:?}; run mw-screenshot --help"
+                ));
             }
             value => {
                 return Err(format!(
@@ -159,7 +161,10 @@ fn capture_screenshot(path: &Path) -> Result<(), String> {
                 vec!["-b".into(), "-n".into(), "-o".into(), path_str.into()],
             ),
             ("scrot", vec![path_str.into()]),
-            ("import", vec!["-window".into(), "root".into(), path_str.into()]),
+            (
+                "import",
+                vec!["-window".into(), "root".into(), path_str.into()],
+            ),
             ("grim", vec![path_str.into()]),
         ],
         "windows" => vec![],
@@ -222,16 +227,21 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|err| format!("failed to initialize schema: {err}"))
 }
 
-fn data_base() -> Result<PathBuf, String> {
-    dirs::data_local_dir()
+fn memorywhale_dir() -> Result<PathBuf, String> {
+    if let Some(path) = env::var_os("MEMORYWHALE_DATA_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+
+    let base = dirs::data_local_dir()
         .or_else(dirs::home_dir)
-        .ok_or_else(|| "could not resolve local data directory".to_string())
+        .ok_or_else(|| "could not resolve local data directory".to_string())?;
+    Ok(base.join("MemoryWhale"))
 }
 
 fn screenshots_dir() -> Result<PathBuf, String> {
-    Ok(data_base()?.join("MemoryWhale").join("screenshots"))
+    Ok(memorywhale_dir()?.join("screenshots"))
 }
 
 fn database_path() -> Result<PathBuf, String> {
-    Ok(data_base()?.join("MemoryWhale").join("memorywhale.sqlite3"))
+    Ok(memorywhale_dir()?.join("memorywhale.sqlite3"))
 }

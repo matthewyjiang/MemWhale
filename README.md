@@ -19,8 +19,11 @@ It is built around local technical memory:
 - Store the working directory where each command ran.
 - Preserve exit codes, stdout, stderr, timestamps, and debugging notes.
 - Split command-line arguments into searchable SQLite rows.
+- Record a whole interactive terminal session with `mw`.
+- List and replay saved shell sessions from SQLite.
 - Record important command attempts manually with `mw-remember`.
-- Run commands through the `mw` wrapper to capture output automatically.
+- Run single commands through `mw-run` to capture output automatically.
+- Capture opt-in screenshots with `mw-screenshot` when a visual error matters.
 - Query saved terminal memory from SQLite after shutdowns, SSH disconnects, or
   machine switches.
 - Keep terminal memory local by default so project history stays on the
@@ -79,24 +82,45 @@ MemoryWhale now stores command runs as durable local memory:
 - notes
 
 The desktop UI has a Terminal Memory panel for pasting a command and its
-output. The Rust backend also ships helper binaries.
+output. The Rust backend also ships helper binaries for terminal-first use.
 
-Use `mw` when you want MemoryWhale to run a command and automatically capture
-its stdout, stderr, exit code, cwd, and arguments:
+Use `mw` when you want to record a whole interactive shell session:
 
 ```bash
 cd src-tauri
-cargo run --bin mw -- --notes "Check the Rust backend" -- cargo check
+cargo run --bin mw -- --notes "Jetson build debugging"
+```
+
+MemoryWhale starts a recorded subshell. Run commands normally inside it, then
+type `exit` or press Ctrl-D when you want to stop recording. The raw transcript
+is saved under the local MemoryWhale data folder, and searchable session
+metadata is saved in SQLite.
+
+After recording, inspect sessions from the terminal:
+
+```bash
+cd src-tauri
+cargo run --bin mw -- list
+cargo run --bin mw -- show 1
+```
+
+Use `mw-run` when you want MemoryWhale to run one command and automatically
+capture its stdout, stderr, exit code, cwd, and arguments:
+
+```bash
+cd src-tauri
+cargo run --bin mw-run -- --notes "Check the Rust backend" -- cargo check
 ```
 
 The command output still appears in the terminal while MemoryWhale saves a copy
-to SQLite. The `mw` process exits with the same exit code as the command it ran.
+to SQLite. The `mw-run` process exits with the same exit code as the command it
+ran.
 
 By default, MemoryWhale stores its SQLite database in the local app data
 directory. Set `MEMORYWHALE_DATA_DIR` when you want an explicit location:
 
 ```bash
-MEMORYWHALE_DATA_DIR=/tmp/memorywhale-data cargo run --bin mw -- -- echo "saved here"
+MEMORYWHALE_DATA_DIR=/tmp/memorywhale-data cargo run --bin mw-run -- -- echo "saved here"
 ```
 
 Use `mw-remember` when you already have output text and want to save it
@@ -112,8 +136,20 @@ cargo run --bin mw-remember -- \
   -- cargo check --manifest-path MemoryWhale/src-tauri/Cargo.toml
 ```
 
-Those command memories appear as graph nodes and connect to extracted concepts
-from the command, arguments, and error text.
+Use `mw-screenshot` only when you intentionally want to save the current screen
+as part of a debugging trail:
+
+```bash
+cd src-tauri
+cargo run --bin mw-screenshot -- --notes "VS Code showed the TypeScript warning"
+```
+
+Screenshots are local-only and opt-in. On headless machines, such as a Jetson
+without an active desktop display, screenshot capture may fail; terminal memory
+recording still works.
+
+Command memories appear as graph nodes and connect to extracted concepts from
+the command, arguments, and error text.
 
 ## Why I Built It
 
