@@ -14,6 +14,8 @@
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -105,6 +107,9 @@ fn route(path: &str) -> (&'static str, String) {
     if path == "/" {
         return ("200 OK", dashboard());
     }
+    if path == "/graph" {
+        return ("200 OK", graph_page());
+    }
     if path == "/favicon.ico" {
         return ("204 No Content", String::new());
     }
@@ -135,7 +140,7 @@ fn dashboard() -> String {
     let _ = init_min_schema(&conn);
 
     let mut body = String::from("<div class=\"eyebrow\">MemoryWhale</div>\n<h1>Terminal memory</h1>\n");
-    body.push_str("<p class=\"sub\">Your previous commands and recorded sessions, served locally.</p>\n");
+    body.push_str("<p class=\"sub\">Your previous commands and recorded sessions, served locally. <a class=\"glink\" href=\"/graph\">open graph view →</a></p>\n");
 
     body.push_str("<h2>Command runs</h2>\n<div class=\"list\">\n");
     let mut rows = 0;
@@ -375,6 +380,132 @@ fn hints(conn: &Connection, id: i64, command: &str, ok: bool) -> String {
     out
 }
 
+#[derive(Serialize)]
+struct GNode {
+    id: String,
+    label: String,
+    kind: String,
+    run: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct GLink {
+    source: String,
+    target: String,
+}
+
+#[derive(Serialize)]
+struct Graph {
+    nodes: Vec<GNode>,
+    links: Vec<GLink>,
+}
+
+/// Build a graph: command-run nodes linked to the argument-value nodes they used.
+/// Shared arguments connect related commands.
+fn graph_json() -> Result<String, String> {
+    let conn = open_db()?;
+    let _ = init_min_schema(&conn);
+
+    let mut runs: Vec<(i64, String)> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT id, command FROM command_runs ORDER BY id DESC LIMIT 300")
+            .map_err(|e| format!("query runs: {e}"))?;
+        let it = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| format!("read runs: {e}"))?;
+        for row in it.flatten() {
+            runs.push(row);
+        }
+    }
+    let run_ids: HashSet<i64> = runs.iter().map(|(id, _)| *id).collect();
+
+    let mut nodes: Vec<GNode> = Vec::new();
+    let mut links: Vec<GLink> = Vec::new();
+    for (id, command) in &runs {
+        nodes.push(GNode {
+            id: format!("run-{id}"),
+            label: command.clone(),
+            kind: "run".into(),
+            run: Some(*id),
+        });
+    }
+
+    let mut seen_args: HashSet<String> = HashSet::new();
+    {
+        let mut stmt = conn
+            .prepare("SELECT command_run_id, value FROM command_arguments WHERE position >= 1")
+            .map_err(|e| format!("query args: {e}"))?;
+        let it = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| format!("read args: {e}"))?;
+        for (run_id, value) in it.flatten() {
+            if !run_ids.contains(&run_id) || value.trim().is_empty() {
+                continue;
+            }
+            let arg_id = format!("arg-{value}");
+            if seen_args.insert(value.clone()) {
+                nodes.push(GNode {
+                    id: arg_id.clone(),
+                    label: value.clone(),
+                    kind: "arg".into(),
+                    run: None,
+                });
+            }
+            links.push(GLink {
+                source: format!("run-{run_id}"),
+                target: arg_id,
+            });
+        }
+    }
+
+    serde_json::to_string(&Graph { nodes, links }).map_err(|e| format!("serialize graph: {e}"))
+}
+
+fn graph_page() -> String {
+    let data = match graph_json() {
+        Ok(d) => d.replace("</", "<\\/"), // keep an arg value of "</script>" from breaking the page
+        Err(e) => return page("Graph", &format!("<p>{}</p>", esc(&e))),
+    };
+    let mut body = String::new();
+    body.push_str("<a class=\"back\" href=\"/\">← all memory</a>\n");
+    body.push_str("<div class=\"eyebrow\">knowledge graph</div>\n<h1>Command graph</h1>\n");
+    body.push_str("<p class=\"sub\">Each command linked to the arguments it used — shared arguments pull related commands together. Click a command node to open it.</p>\n");
+    body.push_str("<div class=\"legend\"><span class=\"dot run\"></span>command run<span class=\"dot arg\"></span>argument</div>\n");
+    body.push_str("<canvas id=\"g\" width=\"920\" height=\"560\"></canvas>\n");
+    body.push_str("<script>\nconst DATA = ");
+    body.push_str(&data);
+    body.push_str(";\n");
+    body.push_str(GRAPH_JS);
+    body.push_str("\n</script>\n");
+    page("Command graph · MemoryWhale", &body)
+}
+
+const GRAPH_JS: &str = r#"
+const cv=document.getElementById('g'),cx=cv.getContext('2d');
+const W=cv.width,H=cv.height,N=DATA.nodes,L=DATA.links;
+if(!N.length){cx.fillStyle='#566273';cx.font='15px sans-serif';cx.fillText('No commands with arguments yet — record some with mw-remember.',24,40);}
+else{
+const idx={};N.forEach(n=>{idx[n.id]=n;n.x=W/2+(Math.random()-.5)*240;n.y=H/2+(Math.random()-.5)*240;n.vx=0;n.vy=0;});
+L.forEach(l=>{l.s=idx[l.source];l.t=idx[l.target];});
+function step(){
+ for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];let dx=a.x-b.x,dy=a.y-b.y,d=Math.hypot(dx,dy)||1;if(d<280){const f=2000/(d*d);a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}}
+ L.forEach(l=>{if(!l.s||!l.t)return;let dx=l.t.x-l.s.x,dy=l.t.y-l.s.y,d=Math.hypot(dx,dy)||1,f=(d-72)*0.02;l.s.vx+=dx/d*f;l.s.vy+=dy/d*f;l.t.vx-=dx/d*f;l.t.vy-=dy/d*f;});
+ N.forEach(n=>{n.vx+=(W/2-n.x)*0.002;n.vy+=(H/2-n.y)*0.002;n.vx*=0.86;n.vy*=0.86;n.x+=n.vx;n.y+=n.vy;n.x=Math.max(26,Math.min(W-26,n.x));n.y=Math.max(26,Math.min(H-26,n.y));});
+}
+function draw(){
+ cx.clearRect(0,0,W,H);
+ cx.strokeStyle='#d5dee9';cx.lineWidth=1;
+ L.forEach(l=>{if(!l.s||!l.t)return;cx.beginPath();cx.moveTo(l.s.x,l.s.y);cx.lineTo(l.t.x,l.t.y);cx.stroke();});
+ N.forEach(n=>{const r=n.kind==='run'?9:6;cx.beginPath();cx.arc(n.x,n.y,r,0,7);cx.fillStyle=n.kind==='run'?'#2b43dd':'#10b6c6';cx.fill();cx.fillStyle='#0f1722';cx.font='11px ui-monospace,monospace';cx.fillText(n.label,n.x+r+4,n.y+4);});
+}
+let t=0;function loop(){for(let k=0;k<3;k++)step();draw();if(t++<700)requestAnimationFrame(loop);}
+loop();
+cv.style.cursor='pointer';
+cv.onclick=e=>{const rc=cv.getBoundingClientRect(),sx=W/rc.width,sy=H/rc.height,mx=(e.clientX-rc.left)*sx,my=(e.clientY-rc.top)*sy;let best=null,bd=900;N.forEach(n=>{const d=(n.x-mx)**2+(n.y-my)**2;if(d<bd){bd=d;best=n;}});if(best&&best.kind==='run'&&best.run!=null)location.href='/command/'+best.run;};
+}
+"#;
+
 fn code_block(text: &str) -> String {
     format!("<div class=\"codeblock\"><code>{}</code></div>\n", esc(text))
 }
@@ -421,6 +552,12 @@ pre.err{color:#ffd9c9}
 .hint{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .hint p{margin:0 0 6px}
 .empty{color:var(--muted)}
+.glink{color:var(--azure);font-weight:600}
+canvas{max-width:100%;background:#fff;border:1px solid var(--line);border-radius:12px;margin-top:8px}
+.legend{display:flex;align-items:center;gap:8px;font:.8rem ui-monospace,monospace;color:var(--muted);margin:4px 0 0}
+.legend .dot{width:11px;height:11px;border-radius:999px;display:inline-block;margin-left:14px}
+.legend .dot.run{background:var(--azure)}
+.legend .dot.arg{background:var(--cyan)}
 footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);font:.75rem ui-monospace,monospace;color:var(--muted)}
 "#;
 
