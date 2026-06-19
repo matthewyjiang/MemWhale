@@ -54,6 +54,23 @@ project so a human or AI agent can continue from what already happened.
 
 ## Run
 
+On Ubuntu or Jetson, install the Node/npm and Tauri system dependencies first.
+This fixes errors like `bash: npm: command not found`.
+
+```bash
+sudo apt update
+sudo apt install -y nodejs npm build-essential pkg-config libssl-dev libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+If Ubuntu installs an old Node version and `npm install` fails, install Node 20:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+Then run MemoryWhale:
+
 ```bash
 npm install
 npm run tauri:dev
@@ -67,6 +84,12 @@ npm run dev
 
 The browser build uses an in-memory demo store when Tauri commands are not
 available. The desktop app uses SQLite via the Rust backend.
+
+## Debug Notes
+
+For Jetson/Ubuntu install issues, Tauri desktop errors, browser-mode notes, and
+SQLite inspection commands, see [DEBUG.md](DEBUG.md). It records the exact
+problems hit while setting up MemoryWhale on a Jetson and the fixes that worked.
 
 ## Terminal Memory
 
