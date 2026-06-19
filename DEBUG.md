@@ -418,3 +418,27 @@ This means MemoryWhale remembered the full command:
 ```bash
 npm run dev -- --host 0.0.0.0
 ```
+
+## macOS: `Killed: 9` (exit 137) after copying a binary
+
+On macOS, copying a freshly built binary (e.g. `cp target/release/mw-serve ~/.local/bin/`)
+can invalidate its code signature, so the OS kills it immediately with `Killed: 9`
+(exit code 137) — even for `mw-serve --help`. A binary run straight from
+`target/debug` or `target/release` works, but the copy does not.
+
+Fix: re-sign the copies ad-hoc after installing.
+
+```bash
+cp target/release/{mw,mw-remember,mw-serve,mw-view,mw-recover} ~/.local/bin/
+codesign --force --sign - \
+  ~/.local/bin/mw ~/.local/bin/mw-remember ~/.local/bin/mw-serve \
+  ~/.local/bin/mw-view ~/.local/bin/mw-recover
+```
+
+Verify:
+
+```bash
+mw-serve --help    # should print usage and exit 0 (not "Killed: 9")
+```
+
+This is macOS code-signing only; it does not affect Linux/Jetson installs.
