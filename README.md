@@ -199,6 +199,17 @@ served locally; nothing is uploaded.
 Open a single memory directly with `mw-view <id>`, or recover an interrupted
 recording with `mw-recover`.
 
+### Knowledge graph
+
+The dashboard's `/graph` view turns your command history into a map. Each command
+is one node, **sized by how often you ran it**; arguments are smaller nodes; and
+arguments shared by two or more commands become **bridges** (orange) that reveal
+which tools share a workflow. Click a command to see all of its runs.
+
+<p align="center">
+  <img src="assets/knowledge-graph.svg" alt="MemoryWhale knowledge graph" width="560" />
+</p>
+
 ## Recording Across Terminals (Projects)
 
 Each `mw` records only its own terminal, so work spread across several terminals

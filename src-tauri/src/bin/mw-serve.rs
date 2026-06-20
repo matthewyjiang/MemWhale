@@ -113,6 +113,9 @@ fn route(path: &str) -> (&'static str, String) {
     if let Some(rest) = path.strip_prefix("/project/") {
         return ("200 OK", project_page(rest));
     }
+    if let Some(rest) = path.strip_prefix("/runs/") {
+        return ("200 OK", runs_page(rest));
+    }
     if path == "/favicon.ico" {
         return ("204 No Content", String::new());
     }
@@ -517,7 +520,8 @@ struct GNode {
     id: String,
     label: String,
     kind: String,
-    run: Option<i64>,
+    weight: i64,
+    name: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -532,38 +536,31 @@ struct Graph {
     links: Vec<GLink>,
 }
 
-/// Build a graph: command-run nodes linked to the argument-value nodes they used.
-/// Shared arguments connect related commands.
+/// Build a graph aggregated by command name and argument value. Nodes carry a
+/// weight (how often they appear); arguments used by two or more distinct
+/// commands are marked as bridges. One node per command (not per run).
 fn graph_json() -> Result<String, String> {
     let conn = open_db()?;
     let _ = init_min_schema(&conn);
 
-    let mut runs: Vec<(i64, String)> = Vec::new();
+    let mut run_cmd: HashMap<i64, String> = HashMap::new();
+    let mut cmd_count: HashMap<String, i64> = HashMap::new();
     {
         let mut stmt = conn
-            .prepare("SELECT id, command FROM command_runs ORDER BY id DESC LIMIT 300")
+            .prepare("SELECT id, command FROM command_runs")
             .map_err(|e| format!("query runs: {e}"))?;
         let it = stmt
             .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
             .map_err(|e| format!("read runs: {e}"))?;
-        for row in it.flatten() {
-            runs.push(row);
+        for (id, cmd) in it.flatten() {
+            run_cmd.insert(id, cmd.clone());
+            *cmd_count.entry(cmd).or_insert(0) += 1;
         }
     }
-    let run_ids: HashSet<i64> = runs.iter().map(|(id, _)| *id).collect();
 
-    let mut nodes: Vec<GNode> = Vec::new();
-    let mut links: Vec<GLink> = Vec::new();
-    for (id, command) in &runs {
-        nodes.push(GNode {
-            id: format!("run-{id}"),
-            label: command.clone(),
-            kind: "run".into(),
-            run: Some(*id),
-        });
-    }
-
-    let mut seen_args: HashSet<String> = HashSet::new();
+    let mut arg_count: HashMap<String, i64> = HashMap::new();
+    let mut arg_cmds: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut pairs: HashSet<(String, String)> = HashSet::new();
     {
         let mut stmt = conn
             .prepare("SELECT command_run_id, value FROM command_arguments WHERE position >= 1")
@@ -572,26 +569,110 @@ fn graph_json() -> Result<String, String> {
             .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
             .map_err(|e| format!("read args: {e}"))?;
         for (run_id, value) in it.flatten() {
-            if !run_ids.contains(&run_id) || value.trim().is_empty() {
+            if value.trim().is_empty() {
                 continue;
             }
-            let arg_id = format!("arg-{value}");
-            if seen_args.insert(value.clone()) {
-                nodes.push(GNode {
-                    id: arg_id.clone(),
-                    label: value.clone(),
-                    kind: "arg".into(),
-                    run: None,
-                });
-            }
-            links.push(GLink {
-                source: format!("run-{run_id}"),
-                target: arg_id,
-            });
+            let cmd = match run_cmd.get(&run_id) {
+                Some(c) => c.clone(),
+                None => continue,
+            };
+            *arg_count.entry(value.clone()).or_insert(0) += 1;
+            arg_cmds.entry(value.clone()).or_default().insert(cmd.clone());
+            pairs.insert((cmd, value));
         }
     }
 
+    let mut nodes: Vec<GNode> = Vec::new();
+    for (cmd, count) in &cmd_count {
+        nodes.push(GNode {
+            id: format!("cmd:{cmd}"),
+            label: cmd.clone(),
+            kind: "cmd".into(),
+            weight: *count,
+            name: Some(cmd.clone()),
+        });
+    }
+    for (val, count) in &arg_count {
+        let shared = arg_cmds.get(val).map(|s| s.len() >= 2).unwrap_or(false);
+        nodes.push(GNode {
+            id: format!("arg:{val}"),
+            label: val.clone(),
+            kind: if shared { "bridge".into() } else { "arg".into() },
+            weight: *count,
+            name: None,
+        });
+    }
+    let mut links: Vec<GLink> = Vec::new();
+    for (cmd, val) in &pairs {
+        links.push(GLink {
+            source: format!("cmd:{cmd}"),
+            target: format!("arg:{val}"),
+        });
+    }
+
     serde_json::to_string(&Graph { nodes, links }).map_err(|e| format!("serialize graph: {e}"))
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// List all command runs for one command name (where a graph command node links).
+fn runs_page(raw: &str) -> String {
+    let name = percent_decode(raw.trim_end_matches('/'));
+    let conn = match open_db() {
+        Ok(c) => c,
+        Err(e) => return page("Runs", &format!("<p>{}</p>", esc(&e))),
+    };
+    let _ = init_min_schema(&conn);
+
+    let mut body = String::from("<a class=\"back\" href=\"/graph\">← graph</a>\n");
+    body.push_str(&format!("<div class=\"eyebrow\">command</div>\n<h1>{}</h1>\n", esc(&name)));
+    body.push_str("<div class=\"list\">\n");
+    let mut rows = 0;
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, exit_code, created_at, notes FROM command_runs WHERE command = ?1 ORDER BY id DESC",
+    ) {
+        if let Ok(it) = stmt.query_map(params![name], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<i64>>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        }) {
+            for (id, code, at, notes) in it.flatten() {
+                let ok = code == Some(0);
+                body.push_str(&format!(
+                    "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
+                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>\n",
+                    if ok { "ok" } else { "bad" },
+                    match code { Some(c) => format!("exit {c}"), None => "—".into() },
+                    esc(&name), esc(&at), esc(&notes)
+                ));
+                rows += 1;
+            }
+        }
+    }
+    if rows == 0 {
+        body.push_str("<p class=\"empty\">No runs found for this command.</p>");
+    }
+    body.push_str("</div>\n");
+    page(&format!("{} runs · MemoryWhale", name), &body)
 }
 
 fn graph_page() -> String {
@@ -602,8 +683,8 @@ fn graph_page() -> String {
     let mut body = String::new();
     body.push_str("<a class=\"back\" href=\"/\">← all memory</a>\n");
     body.push_str("<div class=\"eyebrow\">knowledge graph</div>\n<h1>Command graph</h1>\n");
-    body.push_str("<p class=\"sub\">Each command linked to the arguments it used — shared arguments pull related commands together. Click a command node to open it.</p>\n");
-    body.push_str("<div class=\"legend\"><span class=\"dot run\"></span>command run<span class=\"dot arg\"></span>argument</div>\n");
+    body.push_str("<p class=\"sub\">Commands sized by how often you ran them, linked to their arguments. Orange arguments are shared by two or more commands (bridges). Click a command to see its runs.</p>\n");
+    body.push_str("<div class=\"legend\"><span class=\"dot run\"></span>command<span class=\"dot arg\"></span>argument<span class=\"dot bridge\"></span>shared</div>\n");
     body.push_str("<canvas id=\"g\" width=\"920\" height=\"560\"></canvas>\n");
     body.push_str("<script>\nconst DATA = ");
     body.push_str(&data);
@@ -618,23 +699,25 @@ const cv=document.getElementById('g'),cx=cv.getContext('2d');
 const W=cv.width,H=cv.height,N=DATA.nodes,L=DATA.links;
 if(!N.length){cx.fillStyle='#566273';cx.font='15px sans-serif';cx.fillText('No commands with arguments yet — record some with mw-remember.',24,40);}
 else{
-const idx={};N.forEach(n=>{idx[n.id]=n;n.x=W/2+(Math.random()-.5)*240;n.y=H/2+(Math.random()-.5)*240;n.vx=0;n.vy=0;});
+const idx={},maxW=Math.max(1,...N.map(n=>n.weight||1));
+N.forEach(n=>{idx[n.id]=n;n.x=W/2+(Math.random()-.5)*260;n.y=H/2+(Math.random()-.5)*260;n.vx=0;n.vy=0;n.r=(n.kind==='cmd'?8:4)+14*Math.sqrt((n.weight||1)/maxW);});
 L.forEach(l=>{l.s=idx[l.source];l.t=idx[l.target];});
+function col(n){return n.kind==='cmd'?'#2b43dd':n.kind==='bridge'?'#e9663a':'#10b6c6';}
 function step(){
- for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];let dx=a.x-b.x,dy=a.y-b.y,d=Math.hypot(dx,dy)||1;if(d<280){const f=2000/(d*d);a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}}
- L.forEach(l=>{if(!l.s||!l.t)return;let dx=l.t.x-l.s.x,dy=l.t.y-l.s.y,d=Math.hypot(dx,dy)||1,f=(d-72)*0.02;l.s.vx+=dx/d*f;l.s.vy+=dy/d*f;l.t.vx-=dx/d*f;l.t.vy-=dy/d*f;});
- N.forEach(n=>{n.vx+=(W/2-n.x)*0.002;n.vy+=(H/2-n.y)*0.002;n.vx*=0.86;n.vy*=0.86;n.x+=n.vx;n.y+=n.vy;n.x=Math.max(26,Math.min(W-26,n.x));n.y=Math.max(26,Math.min(H-26,n.y));});
+ for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];let dx=a.x-b.x,dy=a.y-b.y,d=Math.hypot(dx,dy)||1;if(d<320){const f=2600/(d*d);a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}}
+ L.forEach(l=>{if(!l.s||!l.t)return;let dx=l.t.x-l.s.x,dy=l.t.y-l.s.y,d=Math.hypot(dx,dy)||1,f=(d-84)*0.02;l.s.vx+=dx/d*f;l.s.vy+=dy/d*f;l.t.vx-=dx/d*f;l.t.vy-=dy/d*f;});
+ N.forEach(n=>{n.vx+=(W/2-n.x)*0.002;n.vy+=(H/2-n.y)*0.002;n.vx*=0.86;n.vy*=0.86;n.x+=n.vx;n.y+=n.vy;n.x=Math.max(30,Math.min(W-30,n.x));n.y=Math.max(30,Math.min(H-30,n.y));});
 }
 function draw(){
  cx.clearRect(0,0,W,H);
  cx.strokeStyle='#d5dee9';cx.lineWidth=1;
  L.forEach(l=>{if(!l.s||!l.t)return;cx.beginPath();cx.moveTo(l.s.x,l.s.y);cx.lineTo(l.t.x,l.t.y);cx.stroke();});
- N.forEach(n=>{const r=n.kind==='run'?9:6;cx.beginPath();cx.arc(n.x,n.y,r,0,7);cx.fillStyle=n.kind==='run'?'#2b43dd':'#10b6c6';cx.fill();cx.fillStyle='#0f1722';cx.font='11px ui-monospace,monospace';cx.fillText(n.label,n.x+r+4,n.y+4);});
+ N.forEach(n=>{cx.beginPath();cx.arc(n.x,n.y,n.r,0,7);cx.fillStyle=col(n);cx.fill();cx.fillStyle='#0f1722';cx.font=(n.kind==='cmd'?'600 12px ':'11px ')+'ui-monospace,monospace';cx.fillText(n.label,n.x+n.r+4,n.y+4);});
 }
-let t=0;function loop(){for(let k=0;k<3;k++)step();draw();if(t++<700)requestAnimationFrame(loop);}
+let t=0;function loop(){for(let k=0;k<3;k++)step();draw();if(t++<800)requestAnimationFrame(loop);}
 loop();
 cv.style.cursor='pointer';
-cv.onclick=e=>{const rc=cv.getBoundingClientRect(),sx=W/rc.width,sy=H/rc.height,mx=(e.clientX-rc.left)*sx,my=(e.clientY-rc.top)*sy;let best=null,bd=900;N.forEach(n=>{const d=(n.x-mx)**2+(n.y-my)**2;if(d<bd){bd=d;best=n;}});if(best&&best.kind==='run'&&best.run!=null)location.href='/command/'+best.run;};
+cv.onclick=e=>{const rc=cv.getBoundingClientRect(),sx=W/rc.width,sy=H/rc.height,mx=(e.clientX-rc.left)*sx,my=(e.clientY-rc.top)*sy;let best=null,bd=1e9;N.forEach(n=>{const d=(n.x-mx)**2+(n.y-my)**2;if(d<bd&&d<(n.r+12)*(n.r+12)){bd=d;best=n;}});if(best&&best.kind==='cmd'&&best.name)location.href='/runs/'+encodeURIComponent(best.name);};
 }
 "#;
 
@@ -694,6 +777,7 @@ canvas{max-width:100%;background:#fff;border:1px solid var(--line);border-radius
 .legend .dot{width:11px;height:11px;border-radius:999px;display:inline-block;margin-left:14px}
 .legend .dot.run{background:var(--azure)}
 .legend .dot.arg{background:var(--cyan)}
+.legend .dot.bridge{background:var(--bad)}
 footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);font:.75rem ui-monospace,monospace;color:var(--muted)}
 "#;
 

@@ -1,0 +1,57 @@
+<svg width="100%" viewBox="0 0 680 580" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+<rect x="0" y="0" width="680" height="580" rx="16" fill="#f6f9fc"/>
+<g stroke="#cdd8e6" stroke-width="1" fill="none">
+<line x1="180" y1="190" x2="95" y2="110"/>
+<line x1="180" y1="190" x2="70" y2="235"/>
+<line x1="180" y1="190" x2="120" y2="300"/>
+<line x1="180" y1="190" x2="255" y2="110"/>
+<line x1="180" y1="190" x2="330" y2="300"/>
+<line x1="180" y1="190" x2="375" y2="370"/>
+<line x1="510" y1="175" x2="600" y2="110"/>
+<line x1="510" y1="175" x2="615" y2="200"/>
+<line x1="510" y1="175" x2="600" y2="260"/>
+<line x1="510" y1="175" x2="470" y2="80"/>
+<line x1="510" y1="175" x2="330" y2="300"/>
+<line x1="510" y1="175" x2="375" y2="370"/>
+<line x1="170" y1="420" x2="70" y2="380"/>
+<line x1="170" y1="420" x2="85" y2="480"/>
+<line x1="170" y1="420" x2="270" y2="470"/>
+<line x1="170" y1="420" x2="120" y2="525"/>
+<line x1="520" y1="420" x2="615" y2="370"/>
+<line x1="520" y1="420" x2="620" y2="465"/>
+<line x1="520" y1="420" x2="560" y2="520"/>
+<line x1="520" y1="420" x2="375" y2="370"/>
+<line x1="345" y1="505" x2="330" y2="300"/>
+<line x1="345" y1="505" x2="375" y2="370"/>
+<line x1="345" y1="505" x2="440" y2="530"/>
+</g>
+<g fill="#10b6c6">
+<circle cx="95" cy="110" r="7"/><circle cx="70" cy="235" r="7"/><circle cx="120" cy="300" r="7"/><circle cx="255" cy="110" r="7"/>
+<circle cx="600" cy="110" r="7"/><circle cx="615" cy="200" r="7"/><circle cx="600" cy="260" r="7"/><circle cx="470" cy="80" r="7"/>
+<circle cx="70" cy="380" r="7"/><circle cx="85" cy="480" r="7"/><circle cx="270" cy="470" r="7"/><circle cx="120" cy="525" r="7"/>
+<circle cx="615" cy="370" r="7"/><circle cx="620" cy="465" r="7"/><circle cx="560" cy="520" r="7"/><circle cx="440" cy="530" r="7"/>
+</g>
+<g font-size="12" fill="#2b4a52">
+<text x="107" y="114">check</text><text x="82" y="239">--release</text><text x="132" y="304">test</text><text x="267" y="114">--manifest-path</text>
+<text x="586" y="114" text-anchor="end">dev</text><text x="601" y="204" text-anchor="end">--host</text><text x="586" y="264" text-anchor="end">tauri:dev</text><text x="456" y="84" text-anchor="end">install</text>
+<text x="82" y="384">status</text><text x="97" y="484">log</text><text x="282" y="474">commit</text><text x="132" y="529">push</text>
+<text x="601" y="374" text-anchor="end">launch</text><text x="606" y="469" text-anchor="end">topic</text><text x="546" y="524" text-anchor="end">node</text><text x="452" y="534">compose</text>
+</g>
+<g fill="#e9663a">
+<circle cx="330" cy="300" r="14"/><circle cx="375" cy="370" r="14"/>
+</g>
+<g font-size="13" fill="#993c1d" text-anchor="middle">
+<text x="330" y="323">build</text><text x="375" y="393">run</text>
+</g>
+<g fill="#2b43dd">
+<circle cx="180" cy="190" r="26"/><circle cx="510" cy="175" r="22"/><circle cx="170" cy="420" r="20"/><circle cx="520" cy="420" r="18"/><circle cx="345" cy="505" r="18"/>
+</g>
+<g font-size="13" fill="#1b2a6b" text-anchor="middle" font-weight="600">
+<text x="180" y="233">cargo</text><text x="510" y="214">npm</text><text x="170" y="457">git</text><text x="520" y="455">ros2</text><text x="345" y="540">docker</text>
+</g>
+<g font-size="12" fill="#566273">
+<circle cx="56" cy="562" r="6" fill="#2b43dd"/><text x="68" y="566">command (size = how often run)</text>
+<circle cx="320" cy="562" r="6" fill="#10b6c6"/><text x="332" y="566">argument</text>
+<circle cx="430" cy="562" r="6" fill="#e9663a"/><text x="442" y="566">shared (links commands)</text>
+</g>
+</svg>
