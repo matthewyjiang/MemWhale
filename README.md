@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/memorywhale-logo.png" alt="MemoryWhale logo" width="160" />
+  <img src="assets/memorywhale-logo-sm.png" alt="MemoryWhale logo" width="160" />
 </p>
 
 <h1 align="center">MemoryWhale</h1>
