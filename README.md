@@ -1,4 +1,8 @@
-# MemoryWhale
+<p align="center">
+  <img src="assets/memorywhale-logo.png" alt="MemoryWhale logo" width="160" />
+</p>
+
+<h1 align="center">MemoryWhale</h1>
 
 MemoryWhale is a Rust/Tauri local-first terminal memory system that saves
 commands, arguments, working directories, exit codes, stdout, stderr, and notes
