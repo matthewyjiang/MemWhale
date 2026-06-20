@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -110,6 +110,9 @@ fn route(path: &str) -> (&'static str, String) {
     if path == "/graph" {
         return ("200 OK", graph_page());
     }
+    if let Some(rest) = path.strip_prefix("/project/") {
+        return ("200 OK", project_page(rest));
+    }
     if path == "/favicon.ico" {
         return ("204 No Content", String::new());
     }
@@ -141,6 +144,22 @@ fn dashboard() -> String {
 
     let mut body = String::from("<div class=\"eyebrow\">MemoryWhale</div>\n<h1>Terminal memory</h1>\n");
     body.push_str("<p class=\"sub\">Your previous commands and recorded sessions, served locally. <a class=\"glink\" href=\"/graph\">open graph view →</a></p>\n");
+
+    let projects = project_counts(&conn);
+    if !projects.is_empty() {
+        let mut names: Vec<(&String, &i64)> = projects.iter().collect();
+        names.sort_by(|a, b| a.0.cmp(b.0));
+        body.push_str("<h2>Projects</h2>\n<div class=\"chips\">\n");
+        for (name, n) in names {
+            body.push_str(&format!(
+                "<a class=\"chip\" href=\"/project/{}\">{} <span>{}</span></a>\n",
+                esc(name),
+                esc(name),
+                n
+            ));
+        }
+        body.push_str("</div>\n");
+    }
 
     body.push_str("<h2>Command runs</h2>\n<div class=\"list\">\n");
     let mut rows = 0;
@@ -208,6 +227,119 @@ fn dashboard() -> String {
     body.push_str("</div>\n");
 
     page("MemoryWhale — terminal memory", &body)
+}
+
+/// Extract a `project:<name>` tag from a notes string, if present.
+fn project_of(notes: &str) -> Option<String> {
+    let re = Regex::new(r"project:([\w.\-]+)").ok()?;
+    re.captures(notes).map(|c| c[1].to_string())
+}
+
+/// Count how many command runs + sessions belong to each project tag.
+fn project_counts(conn: &Connection) -> HashMap<String, i64> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for sql in ["SELECT notes FROM command_runs", "SELECT notes FROM sessions"] {
+        if let Ok(mut stmt) = conn.prepare(sql) {
+            if let Ok(it) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                for notes in it.flatten() {
+                    if let Some(p) = project_of(&notes) {
+                        *counts.entry(p).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+    counts
+}
+
+/// A combined, time-ordered view of every command run and session tagged with a
+/// given project — even if they were recorded in different terminals.
+fn project_page(raw_name: &str) -> String {
+    let name = raw_name.trim_end_matches('/').to_string();
+    let conn = match open_db() {
+        Ok(c) => c,
+        Err(e) => return page("Project", &format!("<p>{}</p>", esc(&e))),
+    };
+    let _ = init_min_schema(&conn);
+
+    let mut items: Vec<(String, String)> = Vec::new(); // (timestamp, row html)
+
+    if let Ok(mut stmt) =
+        conn.prepare("SELECT id, command, exit_code, created_at, notes FROM command_runs")
+    {
+        if let Ok(it) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        }) {
+            for (id, cmd, code, at, notes) in it.flatten() {
+                if project_of(&notes).as_deref() != Some(name.as_str()) {
+                    continue;
+                }
+                let ok = code == Some(0);
+                let row = format!(
+                    "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
+                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>",
+                    if ok { "ok" } else { "bad" },
+                    match code { Some(c) => format!("exit {c}"), None => "—".into() },
+                    esc(&cmd), esc(&at), esc(&notes)
+                );
+                items.push((at, row));
+            }
+        }
+    }
+
+    if let Ok(mut stmt) =
+        conn.prepare("SELECT id, started_at, byte_count, notes FROM sessions")
+    {
+        if let Ok(it) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        }) {
+            for (id, at, bytes, notes) in it.flatten() {
+                if project_of(&notes).as_deref() != Some(name.as_str()) {
+                    continue;
+                }
+                let row = format!(
+                    "<a class=\"row\" href=\"/session/{id}\"><span class=\"badge sess\">session</span>\
+                     <span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} · {bytes} bytes</span></a>",
+                    esc(&at), esc(&notes)
+                );
+                items.push((at, row));
+            }
+        }
+    }
+
+    items.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+
+    let mut body = String::from("<a class=\"back\" href=\"/\">← all memory</a>\n");
+    body.push_str(&format!("<div class=\"eyebrow\">project</div>\n<h1>{}</h1>\n", esc(&name)));
+    body.push_str(&format!(
+        "<p class=\"sub\">{} memory item(s) across all terminals, newest first.</p>\n",
+        items.len()
+    ));
+    body.push_str("<div class=\"list\">\n");
+    if items.is_empty() {
+        body.push_str("<p class=\"empty\">No memory tagged <code>project:");
+        body.push_str(&esc(&name));
+        body.push_str("</code> yet. Record with <code>--notes \"project:");
+        body.push_str(&esc(&name));
+        body.push_str("\"</code>.</p>");
+    }
+    for (_, row) in items {
+        body.push_str(&row);
+        body.push('\n');
+    }
+    body.push_str("</div>\n");
+    page(&format!("{} · MemoryWhale", name), &body)
 }
 
 fn command_page(id: i64) -> Result<String, String> {
@@ -553,6 +685,10 @@ pre.err{color:#ffd9c9}
 .hint p{margin:0 0 6px}
 .empty{color:var(--muted)}
 .glink{color:var(--azure);font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:7px 14px;font:600 .85rem ui-monospace,monospace;color:var(--azure)}
+.chip span{background:#eaeefe;border-radius:999px;padding:1px 8px;font-size:.72rem}
+.chip:hover{border-color:var(--azure)}
 canvas{max-width:100%;background:#fff;border:1px solid var(--line);border-radius:12px;margin-top:8px}
 .legend{display:flex;align-items:center;gap:8px;font:.8rem ui-monospace,monospace;color:var(--muted);margin:4px 0 0}
 .legend .dot{width:11px;height:11px;border-radius:999px;display:inline-block;margin-left:14px}
