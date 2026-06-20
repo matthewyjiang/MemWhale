@@ -60,6 +60,28 @@ mw-serve                                   # binds 0.0.0.0:7071
 
 Click any command/session for the detail page + suggested next steps.
 A single memory page can also be generated with `mw-view <id>`.
+The dashboard also has a `/graph` view of commands linked to their arguments.
+
+## 3b. Record across multiple terminals (projects)
+
+Each `mw` records only its own terminal, so multi-terminal work is captured as
+separate sessions. Give them the same `project:<name>` tag and the dashboard
+groups them automatically:
+
+```bash
+# terminal 1
+mw --notes "project:pop_playlist git history"
+# terminal 2
+mw --notes "project:pop_playlist server testing"
+```
+
+On the dashboard, the **Projects** section lists each project; opening one merges
+every command run and session tagged with it into a single time-ordered timeline,
+across all terminals.
+
+- Keep project names a single token: `project:pop_playlist` (underscores fine),
+  not `project:"two words"` (only the first word is captured).
+- To auto-record every new terminal without typing `mw`, use `mw global on`.
 
 ## 4. Query directly (power users)
 

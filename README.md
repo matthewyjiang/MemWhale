@@ -174,6 +174,47 @@ recording still works.
 Command memories appear as graph nodes and connect to extracted concepts from
 the command, arguments, and error text.
 
+## Web Dashboard
+
+`mw-serve` serves your memory as a local web page — useful on headless machines
+(e.g. a Jetson) where the desktop app cannot open. Run it on the machine that has
+the data, then open it from any browser on your network:
+
+```bash
+mw-serve                       # binds 0.0.0.0:7071
+#   this machine:  http://localhost:7071/
+#   over the LAN:   http://<machine-ip>:7071/   (find the IP with: hostname -I)
+```
+
+The dashboard lists your command runs and recorded sessions, opens a readable
+detail page for each (with suggested next steps mined from your history), and
+includes a `/graph` view of commands linked to the arguments they used. It also
+auto-recovers any interrupted session transcripts on startup. Everything is
+served locally; nothing is uploaded.
+
+Open a single memory directly with `mw-view <id>`, or recover an interrupted
+recording with `mw-recover`.
+
+## Recording Across Terminals (Projects)
+
+Each `mw` records only its own terminal, so work spread across several terminals
+is captured as separate sessions. Tag them with the same `project:<name>` in the
+notes and MemoryWhale groups them automatically:
+
+```bash
+# terminal 1
+mw --notes "project:pop_playlist git history"
+# terminal 2
+mw --notes "project:pop_playlist server testing"
+```
+
+The dashboard shows a **Projects** section; opening a project merges every
+command run and session for it into one time-ordered timeline, across all
+terminals. To auto-record every new terminal without typing `mw` each time, use
+`mw global on` (and `mw global off` to stop).
+
+See [SOP.md](SOP.md) for the full operating procedure.
+
 ## Why I Built It
 
 I was running the same robotics repo on two different machines: a Jetson and my
