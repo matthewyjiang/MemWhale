@@ -229,8 +229,8 @@ information honestly.
 
 ### Section 5. Duty to Future Work
 
-Agents shall consider not only the immediate task but also the future usefulness
-of the resulting memory.
+Agents shall serve the immediate task. They shall also weigh whether the memory
+it leaves behind will help the work that comes after.
 
 ---
 
