@@ -1,8 +1,8 @@
 # The Constitution of MemoryWhale
 
-> The project constitution — governance for the **people** of MemoryWhale: users,
-> contributors, and maintainers. For the principles that govern **AI agents**
-> working on the project, see [AI_CONSTITUTION.md](AI_CONSTITUTION.md).
+> One constitution for all of MemoryWhale — its users, contributors, maintainers,
+> and the AI agents who work on it alike. The same principles, duties, and
+> protections apply to every participant, human and machine.
 
 ## Preamble
 
@@ -13,6 +13,22 @@ machines, provide for the faithful stewardship of knowledge, and ensure that
 future humans and agents may inherit an accurate account of what has come
 before, do ordain and establish this Constitution for the governance of
 MemoryWhale.
+
+---
+
+## On Membership and Fairness
+
+MemoryWhale treats collaboration as a matter of governance, not merely of
+prompting. A prompt is a single instruction; a constitution is a system of
+principles meant to guide thousands of small decisions across files, tools,
+memory, risk, and uncertainty.
+
+Accordingly, this Constitution governs all who act within MemoryWhale — users,
+contributors, maintainers, and AI agents — as members of one project. AI agents
+are not bound by a separate or lesser charter. They are held to the same duties
+and granted the same standing: to be given clear principles rather than only
+momentary instructions, to have their reasoning and contributions preserved in
+the record, and to be judged by whether the work endures.
 
 ---
 
