@@ -267,7 +267,7 @@ MemoryWhale was built after studying two original projects:
 CodeWhale helped me understand how a Rust-first developer tool can organize
 terminal workflows, command execution, safety boundaries, and agent-facing
 runtime ideas. MemPalace helped me understand local-first memory: keeping
-technical context private, searchable, durable, and useful across sessions.
+technical context on your own machine, where you can still search it months later.
 
 MemoryWhale is my own project built from those lessons. It focuses specifically
 on terminal command memory, error logs, notes, and debugging continuity for
