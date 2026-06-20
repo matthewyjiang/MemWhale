@@ -290,5 +290,7 @@ MemoryWhale is guided by a small set of project documents:
   the project.
 - [Contributing](CONTRIBUTING.md) explains how to make useful changes.
 - [Code of Conduct](CODE_OF_CONDUCT.md) defines the standard for collaboration.
-- [AI Constitution](CONSTITUTION.md) defines how AI agents should reason and act
-  when working on this project.
+- [Constitution](CONSTITUTION.md) is the project's constitution for its people —
+  users, contributors, and maintainers.
+- [AI Constitution](AI_CONSTITUTION.md) defines how AI agents should reason and
+  act when working on this project.

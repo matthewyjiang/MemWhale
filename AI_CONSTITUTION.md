@@ -1,5 +1,9 @@
 # MemoryWhale AI Constitution
 
+> Governance for **AI agents** working on MemoryWhale. For the project's governance
+> of its **people** (users, contributors, and maintainers), see
+> [CONSTITUTION.md](CONSTITUTION.md).
+
 MemoryWhale is built on the belief that the future of AI work is not just
 better prompting. It is better governance.
 

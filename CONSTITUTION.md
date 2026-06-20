@@ -1,5 +1,9 @@
 # The Constitution of MemoryWhale
 
+> The project constitution — governance for the **people** of MemoryWhale: users,
+> contributors, and maintainers. For the principles that govern **AI agents**
+> working on the project, see [AI_CONSTITUTION.md](AI_CONSTITUTION.md).
+
 ## Preamble
 
 We, the Users, Contributors, Maintainers, and Agents of MemoryWhale, in order to
