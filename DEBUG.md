@@ -4,6 +4,9 @@ This file records the real setup and debugging path used to bring MemoryWhale
 up on a Jetson/Ubuntu machine. It is written for humans who hit the same
 terminal problems later.
 
+For deploying and testing MemoryWhale on the Jetson — the binaries, the
+dashboard, global and in-container recording — see [JETSON_TESTING.md](JETSON_TESTING.md).
+
 ## Goal
 
 MemoryWhale is a Rust/Tauri local-first terminal memory system. It stores

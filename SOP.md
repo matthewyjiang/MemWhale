@@ -134,3 +134,6 @@ self-heals. Recovery is idempotent — safe to run anytime.
 | Screenshots | `<data_local>/MemoryWhale/screenshots/` |
 
 `<data_local>` = `~/.local/share` on Linux/Jetson, `~/Library/Application Support` on macOS.
+
+Deploying and testing on a headless Jetson (binaries, dashboard over the LAN,
+global and in-container recording) is covered in [JETSON_TESTING.md](JETSON_TESTING.md).
