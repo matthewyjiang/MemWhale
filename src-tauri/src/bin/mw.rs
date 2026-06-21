@@ -75,10 +75,13 @@ fn record_session(notes: String) -> Result<(), String> {
     eprintln!("mw: type `exit` (or Ctrl-D) to stop recording.\n");
 
     // `script -q <file>` runs $SHELL interactively and records all I/O to <file>
-    // on both macOS (BSD script) and Linux (util-linux script).
+    // on both macOS (BSD script) and Linux (util-linux script). MW_RECORDING is
+    // set so the recorded shell's global-recording hook sees the guard and does
+    // not start a nested recording, however this session was launched.
     let status = Command::new("script")
         .arg("-q")
         .arg(&transcript_path)
+        .env("MW_RECORDING", "1")
         .status()
         .map_err(|err| format!("failed to launch `script` (is it installed?): {err}"))?;
 
