@@ -167,26 +167,28 @@ fn dashboard() -> String {
     body.push_str("<h2>Command runs</h2>\n<div class=\"list\">\n");
     let mut rows = 0;
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, command, exit_code, created_at, notes FROM command_runs ORDER BY id DESC LIMIT 200",
+        "SELECT id, command, argv_json, exit_code, created_at, notes FROM command_runs ORDER BY id DESC LIMIT 200",
     ) {
         if let Ok(iter) = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, Option<i64>>(2)?,
-                r.get::<_, String>(3)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<i64>>(3)?,
                 r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
             ))
         }) {
             for row in iter.flatten() {
-                let (id, cmd, code, at, notes) = row;
+                let (id, cmd, argv_json, code, at, notes) = row;
+                let full = full_command(&argv_json, &cmd);
                 let ok = code == Some(0);
                 body.push_str(&format!(
                     "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>\n",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc(&cmd),
+                    esc(&full),
                     esc(&at),
                     esc(&notes)
                 ));
@@ -268,18 +270,19 @@ fn project_page(raw_name: &str) -> String {
     let mut items: Vec<(String, String)> = Vec::new(); // (timestamp, row html)
 
     if let Ok(mut stmt) =
-        conn.prepare("SELECT id, command, exit_code, created_at, notes FROM command_runs")
+        conn.prepare("SELECT id, command, argv_json, exit_code, created_at, notes FROM command_runs")
     {
         if let Ok(it) = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, Option<i64>>(2)?,
-                r.get::<_, String>(3)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<i64>>(3)?,
                 r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
             ))
         }) {
-            for (id, cmd, code, at, notes) in it.flatten() {
+            for (id, cmd, argv_json, code, at, notes) in it.flatten() {
                 if project_of(&notes).as_deref() != Some(name.as_str()) {
                     continue;
                 }
@@ -289,7 +292,7 @@ fn project_page(raw_name: &str) -> String {
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc(&cmd), esc(&at), esc(&notes)
+                    esc(&full_command(&argv_json, &cmd)), esc(&at), esc(&notes)
                 );
                 items.push((at, row));
             }
@@ -645,24 +648,25 @@ fn runs_page(raw: &str) -> String {
     body.push_str("<div class=\"list\">\n");
     let mut rows = 0;
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, exit_code, created_at, notes FROM command_runs WHERE command = ?1 ORDER BY id DESC",
+        "SELECT id, argv_json, exit_code, created_at, notes FROM command_runs WHERE command = ?1 ORDER BY id DESC",
     ) {
         if let Ok(it) = stmt.query_map(params![name], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
-                r.get::<_, Option<i64>>(1)?,
-                r.get::<_, String>(2)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
                 r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
             ))
         }) {
-            for (id, code, at, notes) in it.flatten() {
+            for (id, argv_json, code, at, notes) in it.flatten() {
                 let ok = code == Some(0);
                 body.push_str(&format!(
                     "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>\n",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc(&name), esc(&at), esc(&notes)
+                    esc(&full_command(&argv_json, &name)), esc(&at), esc(&notes)
                 ));
                 rows += 1;
             }
@@ -780,6 +784,16 @@ canvas{max-width:100%;background:#fff;border:1px solid var(--line);border-radius
 .legend .dot.bridge{background:var(--bad)}
 footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);font:.75rem ui-monospace,monospace;color:var(--muted)}
 "#;
+
+/// The full command line from stored argv (e.g. "npm run tauri:dev"), falling
+/// back to the bare command name if argv can't be parsed.
+fn full_command(argv_json: &str, fallback: &str) -> String {
+    serde_json::from_str::<Vec<String>>(argv_json)
+        .ok()
+        .filter(|a| !a.is_empty())
+        .map(|a| a.join(" "))
+        .unwrap_or_else(|| fallback.to_string())
+}
 
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
