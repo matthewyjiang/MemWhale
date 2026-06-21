@@ -7,28 +7,30 @@ on:
   workflow_dispatch:
 
 jobs:
-  binaries:
-    name: Build CLI binaries
+  build:
+    name: Build (Rust + frontend)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: src-tauri
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build the standalone binaries
-        run: >
-          cargo build
-          --bin mw --bin mw-remember --bin mw-serve
-          --bin mw-view --bin mw-recover --bin mw-run --bin mw-screenshot
 
-  frontend:
-    name: Build frontend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libsoup-3.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the crate (lib + binaries)
+        working-directory: src-tauri
+        run: cargo build
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm install
-      - run: npm run build
+
+      - name: Build the frontend
+        run: |
+          npm install
+          npm run build
