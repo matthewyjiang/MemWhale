@@ -4,6 +4,25 @@
 
 <h1 align="center">MemoryWhale</h1>
 
+<p align="center">
+  <a href="https://github.com/wuisabel-gif/MemWhale/releases"><img src="https://img.shields.io/github/v/release/wuisabel-gif/MemWhale?color=2b43dd&label=release" alt="release"/></a>
+  <img src="https://img.shields.io/badge/license-MIT-2b43dd" alt="license MIT"/>
+  <img src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white" alt="Rust"/>
+  <img src="https://img.shields.io/badge/Tauri-24C8DB?logo=tauri&logoColor=white" alt="Tauri"/>
+  <img src="https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white" alt="SQLite"/>
+  <img src="https://img.shields.io/badge/local--first-no%20upload-168a69" alt="local-first, nothing uploaded"/>
+</p>
+
+<p align="center"><b>Use it as</b></p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/CLI-mw%20%C2%B7%20mw--remember-2b43dd" alt="CLI"/>
+  <img src="https://img.shields.io/badge/Web%20dashboard-mw--serve-10b6c6" alt="Web dashboard"/>
+  <img src="https://img.shields.io/badge/Desktop%20app-Tauri-24C8DB?logo=tauri&logoColor=white" alt="Desktop app"/>
+  <img src="https://img.shields.io/badge/Agent%20skill-Claude%20%2B%20Codex-e9663a" alt="Agent skill"/>
+  <img src="https://img.shields.io/badge/Runs%20on-Jetson-76B900?logo=nvidia&logoColor=white" alt="Runs on Jetson"/>
+</p>
+
 MemoryWhale is a Rust/Tauri local-first terminal memory system that saves
 commands, arguments, working directories, exit codes, stdout, stderr, and notes
 into a searchable SQLite database.
