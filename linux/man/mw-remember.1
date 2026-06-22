@@ -1,0 +1,52 @@
+.TH MW-REMEMBER 1 "2026-06-22" "MemoryWhale" "User Commands"
+.SH NAME
+mw-remember \- record a single command run into local MemoryWhale storage
+.SH SYNOPSIS
+.B mw-remember
+.RI [ --cwd
+.IR path ]
+.RI [ --exit-code
+.IR code ]
+.RI [ --stdout
+.IR text ]
+.RI [ --stderr
+.IR text ]
+.RI [ --notes
+.IR text ]
+.B --
+.I command
+.RI [ args... ]
+.SH DESCRIPTION
+.B mw-remember
+stores one command run \(em its command and arguments, working directory,
+exit code, captured output, and an optional note \(em into the local
+MemoryWhale SQLite database. It is the low-level building block used by the
+per-command shell hook and can also be called directly from scripts. Nothing
+is uploaded.
+.SH OPTIONS
+.TP
+.BI "--cwd " path
+Working directory to record (default: the current directory).
+.TP
+.BI "--exit-code " code
+.RB "Exit status of the command. Also accepts " --exit .
+.TP
+.BI "--stdout " text
+Captured standard output to store.
+.TP
+.BI "--stderr " text
+Captured standard error to store.
+.TP
+.BI "--notes " text
+Free-form note attached to the run.
+.TP
+.B --
+Everything after this is the command and its arguments.
+.SH EXAMPLES
+.nf
+mw-remember --cwd "$PWD" --exit-code 0 \\
+  --notes "started the dev server" -- npm run dev -- --host 0.0.0.0
+.fi
+.SH SEE ALSO
+.BR mw (1),
+.BR mw-serve (1)

@@ -27,3 +27,36 @@ tauri-plugin-dialog = "2.0"
 tauri-plugin-fs = "2.0"
 tauri-plugin-opener = "2.0"
 thiserror = "1"
+
+# Debian packaging for the standalone CLI binaries (cargo-deb).
+# Build with:  cargo install cargo-deb && cd src-tauri && cargo deb
+[package.metadata.deb]
+name = "memorywhale"
+maintainer = "Isabel Wu <wuisabel@usc.edu>"
+copyright = "2026, MemoryWhale"
+license-file = ["../LICENSE", "0"]
+extended-description = """
+Local-first terminal memory. Record commands, whole sessions, and output into a \
+local SQLite database and browse them in a built-in web dashboard. Nothing is \
+ever uploaded."""
+section = "utils"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/mw", "usr/bin/", "755"],
+    ["target/release/mw-remember", "usr/bin/", "755"],
+    ["target/release/mw-serve", "usr/bin/", "755"],
+    ["target/release/mw-view", "usr/bin/", "755"],
+    ["target/release/mw-recover", "usr/bin/", "755"],
+    ["target/release/mw-run", "usr/bin/", "755"],
+    ["target/release/mw-screenshot", "usr/bin/", "755"],
+    ["../linux/man/mw.1", "usr/share/man/man1/", "644"],
+    ["../linux/man/mw-serve.1", "usr/share/man/man1/", "644"],
+    ["../linux/man/mw-remember.1", "usr/share/man/man1/", "644"],
+    ["../linux/completions/mw.bash", "usr/share/bash-completion/completions/mw", "644"],
+    ["../linux/completions/_mw", "usr/share/zsh/vendor-completions/_mw", "644"],
+    ["../linux/shell/memorywhale.sh", "usr/share/memorywhale/", "644"],
+    ["../linux/systemd/memorywhale-dashboard.service", "usr/share/memorywhale/", "644"],
+    ["../linux/systemd/enable-dashboard.sh", "usr/share/memorywhale/", "755"],
+    ["../linux/README.md", "usr/share/doc/memorywhale/LINUX.md", "644"],
+]

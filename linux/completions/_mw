@@ -1,0 +1,38 @@
+#compdef mw
+# zsh completion for mw (MemoryWhale).
+# Install: copy this file (named _mw) into a directory on your $fpath, e.g.
+#   mkdir -p ~/.local/share/zsh/site-functions
+#   cp _mw ~/.local/share/zsh/site-functions/_mw
+#   echo 'fpath=(~/.local/share/zsh/site-functions $fpath)' >> ~/.zshrc
+#   autoload -Uz compinit && compinit
+
+_mw() {
+  local -a subcmds
+  subcmds=(
+    'list:list recorded sessions'
+    'show:print the full transcript of a session'
+    'global:auto-record every new terminal (on/off/status)'
+  )
+
+  if (( CURRENT == 2 )); then
+    _arguments \
+      '--notes[attach a note to this session]:note:' \
+      '(-h --help)'{-h,--help}'[show help]' \
+      '*::command:->cmds'
+    _describe -t commands 'mw command' subcmds
+    return
+  fi
+
+  case ${words[2]} in
+    global)
+      _values 'state' on off status
+      ;;
+    show)
+      local -a ids
+      ids=(${(f)"$(mw list 2>/dev/null | sed -n 's/^#\([0-9][0-9]*\).*/\1/p')"})
+      _describe -t ids 'session id' ids
+      ;;
+  esac
+}
+
+_mw "$@"

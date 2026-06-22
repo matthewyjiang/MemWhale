@@ -109,6 +109,17 @@ npm run dev
 The browser build uses an in-memory demo store when Tauri commands are not
 available. The desktop app uses SQLite via the Rust backend.
 
+## Linux Integration
+
+To run MemoryWhale as a first-class Linux tool — install the `mw*` binaries,
+auto-record every command with a shell hook, keep the dashboard alive as a
+`systemd --user` service (survives SSH logout), add tab-completions and man
+pages, or build a `.deb` — see [linux/README.md](linux/README.md):
+
+```bash
+linux/install.sh --all   # binaries + hook + dashboard service + completions + man
+```
+
 ## Debug Notes
 
 For Jetson/Ubuntu install issues, Tauri desktop errors, browser-mode notes, and

@@ -1,0 +1,45 @@
+.TH MW-SERVE 1 "2026-06-22" "MemoryWhale" "User Commands"
+.SH NAME
+mw-serve \- serve the MemoryWhale memory store as a local web dashboard
+.SH SYNOPSIS
+.B mw-serve
+.RI [ --host
+.IR addr ]
+.RI [ --port
+.IR n ]
+.SH DESCRIPTION
+.B mw-serve
+runs a small, dependency-free HTTP server that renders the local MemoryWhale
+database as a browsable dashboard: recorded sessions, command runs with their
+full command lines, projects grouped by working directory, and an interactive
+knowledge graph. It reads the same local SQLite database written by
+.BR mw (1)
+and
+.BR mw-remember (1)
+and serves entirely from the local machine.
+.PP
+On start it self-heals by importing any session transcripts whose recording was
+interrupted before its database row was written.
+.SH OPTIONS
+.TP
+.BI "--host " addr
+Address to bind. Default
+.BR 0.0.0.0 ,
+which makes the dashboard reachable from other machines on the LAN (for
+example, opening a Jetson's dashboard from a laptop browser). Use
+.B 127.0.0.1
+to restrict it to localhost.
+.TP
+.BI "--port " n
+TCP port to listen on. Default
+.BR 7071 .
+.SH EXAMPLES
+.TP
+Localhost only:
+.B mw-serve --host 127.0.0.1
+.TP
+Reachable on the LAN at port 8080:
+.B mw-serve --host 0.0.0.0 --port 8080
+.SH SEE ALSO
+.BR mw (1),
+.BR mw-remember (1)

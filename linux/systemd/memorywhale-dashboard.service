@@ -1,0 +1,17 @@
+[Unit]
+Description=MemoryWhale dashboard (local web UI for your terminal memory)
+Documentation=https://github.com/wuisabel-gif/MemWhale
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# __MW_SERVE__ is replaced with the resolved path to mw-serve by
+# enable-dashboard.sh. Bound to localhost by default; pass --host 0.0.0.0 to
+# reach the dashboard from your LAN (e.g. the Jetson from a laptop browser).
+ExecStart=__MW_SERVE__ --host 127.0.0.1 --port 7071
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

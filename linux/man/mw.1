@@ -1,0 +1,72 @@
+.TH MW 1 "2026-06-22" "MemoryWhale" "User Commands"
+.SH NAME
+mw \- record whole terminal sessions into local MemoryWhale storage
+.SH SYNOPSIS
+.B mw
+.RI [ --notes
+.IR text ]
+.br
+.B mw list
+.br
+.B mw show
+.I id
+.br
+.B mw global
+.RB { on | off | status }
+.SH DESCRIPTION
+.B mw
+starts your login shell inside a recorded subshell (via the system
+.BR script (1)
+tool) and captures every command and all output until you
+.B exit
+the subshell. The session is then stored in a local SQLite database; nothing
+is ever uploaded.
+.PP
+The raw transcript is written under
+.I <data_local>/MemoryWhale/sessions/
+and the cleaned, searchable transcript plus metadata into
+.IR <data_local>/MemoryWhale/memorywhale.sqlite3 .
+On Linux
+.I <data_local>
+is
+.IR ~/.local/share .
+.SH COMMANDS
+.TP
+.BI "mw [--notes " text ]
+Record a session. Attach an optional note.
+.TP
+.B mw list
+List recorded sessions (id, start time, size, note).
+.TP
+.BI "mw show " id
+Print the full faithful transcript of session
+.IR id .
+.TP
+.B mw global on
+Wire a shell-startup hook so every new interactive terminal auto-records.
+.TP
+.B mw global off
+Stop auto-recording new terminals (open recordings continue until you exit).
+.TP
+.B mw global status
+Show whether auto-recording is enabled and where it is wired.
+.SH ENVIRONMENT
+.TP
+.B MEMORYWHALE_DATA_DIR
+Override the data directory (default
+.IR <data_local>/MemoryWhale ).
+.TP
+.B MW_RECORDING
+Set to 1 inside a recorded shell; the global hook checks it to avoid nested
+recordings.
+.SH FILES
+.TP
+.I ~/.local/share/MemoryWhale/memorywhale.sqlite3
+Session and command database.
+.TP
+.I ~/.local/share/MemoryWhale/sessions/
+Raw session transcripts.
+.SH SEE ALSO
+.BR mw-serve (1),
+.BR mw-remember (1),
+.BR script (1)
