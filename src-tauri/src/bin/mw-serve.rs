@@ -293,6 +293,35 @@ fn dashboard(query: &str) -> String {
     }
     body.push_str("</div>\n");
 
+    body.push_str("<h2>Bookmarks</h2>\n<div class=\"list\">\n");
+    let mut brows = 0;
+    if let Ok(mut stmt) =
+        conn.prepare("SELECT id, label, cwd, created_at FROM bookmarks ORDER BY id DESC LIMIT 80")
+    {
+        if let Ok(iter) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        }) {
+            for (id, label, cwd, created_at) in iter.flatten() {
+                body.push_str(&format!(
+                    "<div class=\"row\"><span class=\"badge sess\">mark</span><span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} {}</span></div>\n",
+                    esc(&created_at),
+                    esc_redacted(&label),
+                    cwd.map(|c| format!("· {}", esc_redacted(&c))).unwrap_or_default()
+                ));
+                brows += 1;
+            }
+        }
+    }
+    if brows == 0 {
+        body.push_str("<p class=\"empty\">No bookmarks yet. Mark one with <code>mw mark \"important moment\"</code>.</p>\n");
+    }
+    body.push_str("</div>\n");
+
     page("MemoryWhale — terminal memory", &body)
 }
 
@@ -393,6 +422,31 @@ fn search_results(conn: &Connection, query: &str) -> String {
                         .replace("</span></a>", &format!(" {}</span></a>", tag_pills(&tags)));
                 }
                 out.push_str(&row_html);
+                rows += 1;
+            }
+        }
+    }
+
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, label, cwd, created_at FROM bookmarks
+         WHERE label LIKE ?1 OR IFNULL(cwd, '') LIKE ?1 OR created_at LIKE ?1
+         ORDER BY id DESC LIMIT 40",
+    ) {
+        if let Ok(iter) = stmt.query_map(params![needle.as_str()], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        }) {
+            for (id, label, cwd, created_at) in iter.flatten() {
+                out.push_str(&format!(
+                    "<div class=\"row\"><span class=\"badge sess\">mark</span><span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} {}</span></div>\n",
+                    esc(&created_at),
+                    esc_redacted(&label),
+                    cwd.map(|c| format!("· {}", esc_redacted(&c))).unwrap_or_default()
+                ));
                 rows += 1;
             }
         }
@@ -1210,7 +1264,9 @@ fn init_min_schema(conn: &Connection) -> Result<(), String> {
             transcript_path TEXT NOT NULL DEFAULT '', transcript TEXT NOT NULL DEFAULT '',
             notes TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL DEFAULT '',
             ended_at TEXT NOT NULL DEFAULT '', byte_count INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'finished');",
+            status TEXT NOT NULL DEFAULT 'finished');
+         CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY, label TEXT NOT NULL,
+            cwd TEXT, created_at TEXT NOT NULL, command_run_id INTEGER, session_id INTEGER);",
     )
     .map_err(|e| format!("init schema: {e}"))?;
     let _ = conn.execute(

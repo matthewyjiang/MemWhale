@@ -40,6 +40,10 @@ fn run() -> Result<(), String> {
     match raw_args.first().map(String::as_str) {
         Some("show") => return show_session(&raw_args[1..]),
         Some("list") => return list_sessions(),
+        Some("mark") => return mark_bookmark(&raw_args[1..]),
+        Some("replay") => return replay_command(&raw_args[1..]),
+        Some("demo") => return seed_demo(),
+        Some("export") => return export_memory(&raw_args[1..]),
         Some("global") => return global_cmd(&raw_args[1..]),
         Some("--help") | Some("-h") => {
             print_help();
@@ -61,7 +65,7 @@ fn run() -> Result<(), String> {
             value => return Err(format!("unexpected argument {value:?}; run mw --help")),
         }
     }
-    record_session(notes, live)
+    record_session(append_environment_tags(notes), live)
 }
 
 fn record_session(notes: String, live: bool) -> Result<(), String> {
@@ -162,6 +166,10 @@ fn print_help() {
          mw --live [--notes <text>]  autosave the session to SQLite while it is still running\n\
          mw list                  list recorded sessions\n\
          mw show <id>             print the full faithful transcript of a session\n\
+         mw mark <text>           bookmark the current debugging moment\n\
+         mw replay <run-id>       rerun a saved command from command_runs\n\
+         mw demo                  seed a small demo terminal-memory dataset\n\
+         mw export [project:name] export memory to Markdown + JSON\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
          \n\
          Records every command + output, stored locally and never uploaded.\n\
@@ -284,6 +292,179 @@ fn open_session_db() -> Result<Connection, String> {
     let conn = Connection::open(db_path).map_err(|err| format!("failed to open db: {err}"))?;
     init_schema(&conn)?;
     Ok(conn)
+}
+
+fn mark_bookmark(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("usage: mw mark <text>".to_string());
+    }
+    let label = args.join(" ");
+    let cwd = env::current_dir()
+        .ok()
+        .and_then(|path| path.to_str().map(ToOwned::to_owned));
+    let conn = open_session_db()?;
+    conn.execute(
+        "INSERT INTO bookmarks (label, cwd, created_at) VALUES (?1, ?2, ?3)",
+        params![label, cwd, Utc::now().to_rfc3339()],
+    )
+    .map_err(|err| format!("failed to save bookmark: {err}"))?;
+    println!("mw: marked bookmark #{}", conn.last_insert_rowid());
+    Ok(())
+}
+
+fn replay_command(args: &[String]) -> Result<(), String> {
+    let id: i64 = args
+        .first()
+        .ok_or_else(|| "usage: mw replay <command-run-id>".to_string())?
+        .parse()
+        .map_err(|_| "command-run-id must be a number".to_string())?;
+    let conn = open_session_db()?;
+    let (argv_json, cwd): (String, Option<String>) = conn
+        .query_row(
+            "SELECT argv_json, cwd FROM command_runs WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|err| format!("failed to read command run #{id}: {err}"))?;
+    let argv: Vec<String> =
+        serde_json::from_str(&argv_json).map_err(|err| format!("bad stored argv: {err}"))?;
+    if argv.is_empty() {
+        return Err(format!("command run #{id} has no argv"));
+    }
+
+    println!("mw: replaying #{}: {}", id, argv.join(" "));
+    let mut command = Command::new(&argv[0]);
+    command.args(&argv[1..]);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let status = command
+        .status()
+        .map_err(|err| format!("failed to replay command: {err}"))?;
+    println!("mw: replay exited with {}", status);
+    Ok(())
+}
+
+fn seed_demo() -> Result<(), String> {
+    let conn = open_session_db()?;
+    let now = Utc::now().to_rfc3339();
+    let demo_notes = "project:demo host:jetson runtime:host";
+    conn.execute(
+        "INSERT INTO command_runs (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            "cargo",
+            serde_json::to_string(&vec!["cargo", "check"]).unwrap(),
+            "/demo/MemoryWhale",
+            101_i64,
+            "",
+            "error: failed to build\\nNo package 'libsoup-3.0' found\\n",
+            demo_notes,
+            now
+        ],
+    )
+    .map_err(|err| format!("failed to insert demo command: {err}"))?;
+    let run_id = conn.last_insert_rowid();
+    for (position, value) in ["cargo", "check"].iter().enumerate() {
+        conn.execute(
+            "INSERT INTO command_arguments (command_run_id, position, value) VALUES (?1, ?2, ?3)",
+            params![run_id, position as i64, value],
+        )
+        .map_err(|err| format!("failed to insert demo argument: {err}"))?;
+    }
+    conn.execute(
+        "INSERT INTO bookmarks (label, cwd, created_at) VALUES (?1, ?2, ?3)",
+        params![
+            "Tauri build failed here; install missing Linux packages.",
+            "/demo/MemoryWhale",
+            Utc::now().to_rfc3339()
+        ],
+    )
+    .map_err(|err| format!("failed to insert demo bookmark: {err}"))?;
+    println!("mw: demo memory inserted. Run `mw-serve` and search for project:demo.");
+    Ok(())
+}
+
+fn export_memory(args: &[String]) -> Result<(), String> {
+    let project = args.first().cloned();
+    let export_dir = memorywhale_dir()?.join("exports");
+    fs::create_dir_all(&export_dir)
+        .map_err(|err| format!("failed to create exports dir: {err}"))?;
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    let base = project
+        .as_deref()
+        .unwrap_or("all")
+        .replace([':', '/', '\\', ' '], "-");
+    let markdown_path = export_dir.join(format!("{base}-{stamp}.md"));
+    let json_path = export_dir.join(format!("{base}-{stamp}.json"));
+    let conn = open_session_db()?;
+    let like = project.as_ref().map(|p| format!("%{p}%"));
+
+    let mut md = String::from("# MemoryWhale Debug Bundle\n\n");
+    let mut commands = Vec::new();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at
+             FROM command_runs
+             WHERE ?1 IS NULL OR notes LIKE ?1
+             ORDER BY id",
+        )
+        .map_err(|err| format!("failed to prepare command export: {err}"))?;
+    let rows = stmt
+        .query_map(params![like.as_deref()], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<i64>>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, String>(7)?,
+                r.get::<_, String>(8)?,
+            ))
+        })
+        .map_err(|err| format!("failed to export commands: {err}"))?;
+    for row in rows {
+        let (id, command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at) =
+            row.map_err(|err| format!("command row error: {err}"))?;
+        let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_default();
+        md.push_str(&format!(
+            "## Command #{id}: `{}`\n\n- when: `{created_at}`\n- cwd: `{}`\n- exit: `{:?}`\n- notes: {}\n\n```text\n{}\n{}\n```\n\n",
+            argv.join(" "),
+            cwd.clone().unwrap_or_default(),
+            exit_code,
+            notes,
+            stdout,
+            stderr
+        ));
+        commands.push(serde_json::json!({
+            "id": id,
+            "command": command,
+            "argv": argv,
+            "cwd": cwd,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "notes": notes,
+            "created_at": created_at
+        }));
+    }
+
+    fs::write(&markdown_path, md)
+        .map_err(|err| format!("failed to write markdown export: {err}"))?;
+    fs::write(
+        &json_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "project": project,
+            "commands": commands
+        }))
+        .map_err(|err| format!("failed to encode JSON export: {err}"))?,
+    )
+    .map_err(|err| format!("failed to write JSON export: {err}"))?;
+    println!("mw: exported {}", markdown_path.display());
+    println!("mw: exported {}", json_path.display());
+    Ok(())
 }
 
 fn global_cmd(args: &[String]) -> Result<(), String> {
@@ -535,6 +716,40 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
+
+        CREATE TABLE IF NOT EXISTS command_runs (
+            id INTEGER PRIMARY KEY,
+            command TEXT NOT NULL,
+            argv_json TEXT NOT NULL,
+            cwd TEXT,
+            exit_code INTEGER,
+            stdout TEXT NOT NULL DEFAULT '',
+            stderr TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS command_arguments (
+            id INTEGER PRIMARY KEY,
+            command_run_id INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            value TEXT NOT NULL,
+            FOREIGN KEY(command_run_id) REFERENCES command_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            id INTEGER PRIMARY KEY,
+            label TEXT NOT NULL,
+            cwd TEXT,
+            created_at TEXT NOT NULL,
+            command_run_id INTEGER,
+            session_id INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_command_runs_command ON command_runs(command);
+        CREATE INDEX IF NOT EXISTS idx_command_runs_exit_code ON command_runs(exit_code);
+        CREATE INDEX IF NOT EXISTS idx_command_arguments_value ON command_arguments(value);
+        CREATE INDEX IF NOT EXISTS idx_bookmarks_created_at ON bookmarks(created_at);
         ",
     )
     .map_err(|err| format!("failed to initialize schema: {err}"))?;
@@ -543,6 +758,28 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         [],
     );
     Ok(())
+}
+
+fn append_environment_tags(notes: String) -> String {
+    let mut tags = Vec::new();
+    tags.push(format!("os:{}", env::consts::OS));
+    if PathBuf::from("/.dockerenv").exists() || env::var_os("container").is_some() {
+        tags.push("runtime:container".to_string());
+    } else {
+        tags.push("runtime:host".to_string());
+    }
+    if env::var_os("SSH_CONNECTION").is_some() || env::var_os("SSH_CLIENT").is_some() {
+        tags.push("session:ssh".to_string());
+    }
+    if PathBuf::from("/etc/nv_tegra_release").exists() {
+        tags.push("host:jetson".to_string());
+    }
+
+    if notes.trim().is_empty() {
+        tags.join(" ")
+    } else {
+        format!("{} {}", notes.trim(), tags.join(" "))
+    }
 }
 
 fn memorywhale_dir() -> Result<PathBuf, String> {

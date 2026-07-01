@@ -50,6 +50,7 @@ fn run() -> Result<(), String> {
         return Err("missing command; pass it after --".to_string());
     }
 
+    notes = append_environment_tags(notes);
     let command = command_parts[0].clone();
     let argv_json = serde_json::to_string(&command_parts)
         .map_err(|err| format!("failed to encode argv: {err}"))?;
@@ -123,6 +124,28 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         ",
     )
     .map_err(|err| format!("failed to initialize schema: {err}"))
+}
+
+fn append_environment_tags(notes: String) -> String {
+    let mut tags = Vec::new();
+    tags.push(format!("os:{}", env::consts::OS));
+    if PathBuf::from("/.dockerenv").exists() || env::var_os("container").is_some() {
+        tags.push("runtime:container".to_string());
+    } else {
+        tags.push("runtime:host".to_string());
+    }
+    if env::var_os("SSH_CONNECTION").is_some() || env::var_os("SSH_CLIENT").is_some() {
+        tags.push("session:ssh".to_string());
+    }
+    if PathBuf::from("/etc/nv_tegra_release").exists() {
+        tags.push("host:jetson".to_string());
+    }
+
+    if notes.trim().is_empty() {
+        tags.join(" ")
+    } else {
+        format!("{} {}", notes.trim(), tags.join(" "))
+    }
 }
 
 fn database_path() -> Result<PathBuf, String> {
