@@ -28,9 +28,7 @@
   <img src="https://img.shields.io/badge/Runs%20on-Jetson-76B900?logo=nvidia&logoColor=white" alt="Runs on Jetson"/>
 </p>
 
-MemoryWhale is a Rust/Tauri local-first terminal memory system that saves
-commands, arguments, working directories, exit codes, stdout, stderr, and notes
-into a searchable SQLite database.
+MemoryWhale is a Rust/Tauri local-first terminal memory system that records commands, arguments, logs, sessions, errors, bookmarks, and debug history into SQLite so work survives across machines, SSH sessions, containers, and crashes.
 
 It is built around local technical memory:
 
