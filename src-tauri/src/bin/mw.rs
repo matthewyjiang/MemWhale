@@ -395,13 +395,19 @@ fn export_memory(args: &[String]) -> Result<(), String> {
         .as_deref()
         .unwrap_or("all")
         .replace([':', '/', '\\', ' '], "-");
-    let markdown_path = export_dir.join(format!("{base}-{stamp}.md"));
-    let json_path = export_dir.join(format!("{base}-{stamp}.json"));
+    let bundle_dir = export_dir.join(format!("{base}-{stamp}"));
+    let transcripts_dir = bundle_dir.join("transcripts");
+    fs::create_dir_all(&transcripts_dir)
+        .map_err(|err| format!("failed to create bundle dir: {err}"))?;
+    let markdown_path = bundle_dir.join("memory.md");
+    let json_path = bundle_dir.join("memory.json");
+    let sqlite_path = bundle_dir.join("memorywhale.sqlite3");
     let conn = open_session_db()?;
     let like = project.as_ref().map(|p| format!("%{p}%"));
 
     let mut md = String::from("# MemoryWhale Debug Bundle\n\n");
     let mut commands = Vec::new();
+    let mut sessions = Vec::new();
     let mut stmt = conn
         .prepare(
             "SELECT id, command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at
@@ -451,19 +457,71 @@ fn export_memory(args: &[String]) -> Result<(), String> {
         }));
     }
 
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, transcript_path, transcript, notes, started_at, ended_at, byte_count, status
+             FROM sessions
+             WHERE ?1 IS NULL OR notes LIKE ?1
+             ORDER BY id",
+        )
+        .map_err(|err| format!("failed to prepare session export: {err}"))?;
+    let rows = stmt
+        .query_map(params![like.as_deref()], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, i64>(6)?,
+                r.get::<_, String>(7)?,
+            ))
+        })
+        .map_err(|err| format!("failed to export sessions: {err}"))?;
+    for row in rows {
+        let (id, transcript_path, transcript, notes, started_at, ended_at, byte_count, status) =
+            row.map_err(|err| format!("session row error: {err}"))?;
+        let transcript_file = transcripts_dir.join(format!("session-{id}.txt"));
+        fs::write(&transcript_file, &transcript)
+            .map_err(|err| format!("failed to write transcript export: {err}"))?;
+        md.push_str(&format!(
+            "## Session #{id}\n\n- started: `{started_at}`\n- ended: `{ended_at}`\n- status: `{status}`\n- bytes: `{byte_count}`\n- notes: {notes}\n- transcript: `{}`\n\n",
+            transcript_file
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("transcript.txt")
+        ));
+        sessions.push(serde_json::json!({
+            "id": id,
+            "transcript_path": transcript_path,
+            "exported_transcript": transcript_file.file_name().and_then(|name| name.to_str()).unwrap_or("transcript.txt"),
+            "notes": notes,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "byte_count": byte_count,
+            "status": status
+        }));
+    }
+
     fs::write(&markdown_path, md)
         .map_err(|err| format!("failed to write markdown export: {err}"))?;
     fs::write(
         &json_path,
         serde_json::to_string_pretty(&serde_json::json!({
             "project": project,
-            "commands": commands
+            "commands": commands,
+            "sessions": sessions
         }))
         .map_err(|err| format!("failed to encode JSON export: {err}"))?,
     )
     .map_err(|err| format!("failed to write JSON export: {err}"))?;
-    println!("mw: exported {}", markdown_path.display());
-    println!("mw: exported {}", json_path.display());
+    let db_path = database_path()?;
+    if db_path.exists() {
+        fs::copy(&db_path, &sqlite_path)
+            .map_err(|err| format!("failed to copy SQLite backup: {err}"))?;
+    }
+    println!("mw: exported debug bundle {}", bundle_dir.display());
     Ok(())
 }
 
