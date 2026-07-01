@@ -125,9 +125,8 @@ fn handle(mut stream: TcpStream) {
         return;
     }
     let raw_path = request_line.split_whitespace().nth(1).unwrap_or("/");
-    let path = raw_path.split('?').next().unwrap_or("/");
 
-    let (status, body) = route(path);
+    let (status, body) = route(raw_path);
     let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.as_bytes().len()
@@ -136,9 +135,13 @@ fn handle(mut stream: TcpStream) {
     let _ = stream.write_all(body.as_bytes());
 }
 
-fn route(path: &str) -> (&'static str, String) {
+fn route(raw_path: &str) -> (&'static str, String) {
+    let path = raw_path.split('?').next().unwrap_or("/");
     if path == "/" {
-        return ("200 OK", dashboard());
+        return (
+            "200 OK",
+            dashboard(&query_param(raw_path, "q").unwrap_or_default()),
+        );
     }
     if path == "/graph" {
         return ("200 OK", graph_page());
@@ -183,7 +186,7 @@ fn route(path: &str) -> (&'static str, String) {
     )
 }
 
-fn dashboard() -> String {
+fn dashboard(query: &str) -> String {
     let conn = match open_db() {
         Ok(c) => c,
         Err(e) => {
@@ -201,6 +204,14 @@ fn dashboard() -> String {
         body.push_str(&format!("<div class=\"notice\">{}</div>\n", esc(notice)));
     }
     body.push_str("<p class=\"sub\">Your previous commands and recorded sessions, served locally. <a class=\"glink\" href=\"/graph\">open graph view →</a></p>\n");
+    body.push_str(&format!(
+        "<form class=\"search\" method=\"get\" action=\"/\"><input name=\"q\" value=\"{}\" placeholder=\"Search commands, logs, notes, sessions, cwd, tags\"/><button type=\"submit\">Search</button></form>\n",
+        esc(query)
+    ));
+
+    if !query.trim().is_empty() {
+        body.push_str(&search_results(&conn, query));
+    }
 
     let projects = project_counts(&conn);
     if !projects.is_empty() {
@@ -242,9 +253,9 @@ fn dashboard() -> String {
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>\n",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc(&full),
+                    esc_redacted(&full),
                     esc(&at),
-                    esc(&notes)
+                    esc_redacted(&notes)
                 ));
                 rows += 1;
             }
@@ -311,6 +322,89 @@ fn project_counts(conn: &Connection) -> HashMap<String, i64> {
     counts
 }
 
+fn search_results(conn: &Connection, query: &str) -> String {
+    let needle = format!("%{}%", query.trim());
+    let mut out = String::new();
+    let mut rows = 0;
+    out.push_str("<h2>Search results</h2>\n<div class=\"list\">\n");
+
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, command, argv_json, exit_code, created_at, notes, stdout, stderr
+         FROM command_runs
+         WHERE command LIKE ?1 OR argv_json LIKE ?1 OR IFNULL(cwd, '') LIKE ?1
+            OR stdout LIKE ?1 OR stderr LIKE ?1 OR notes LIKE ?1
+         ORDER BY id DESC LIMIT 40",
+    ) {
+        if let Ok(iter) = stmt.query_map(params![needle.as_str()], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, String>(7)?,
+            ))
+        }) {
+            for row in iter.flatten() {
+                let (id, cmd, argv_json, code, at, notes, stdout, stderr) = row;
+                let ok = code == Some(0);
+                let tags = error_tags(&format!("{stdout}\n{stderr}"));
+                out.push_str(&format!(
+                    "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
+                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{} {}</span></a>\n",
+                    if ok { "ok" } else { "bad" },
+                    match code { Some(c) => format!("exit {c}"), None => "—".into() },
+                    esc_redacted(&full_command(&argv_json, &cmd)),
+                    esc(&at),
+                    tag_pills(&tags),
+                    esc_redacted(&notes)
+                ));
+                rows += 1;
+            }
+        }
+    }
+
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, started_at, ended_at, byte_count, notes, status, transcript
+         FROM sessions
+         WHERE IFNULL(shell, '') LIKE ?1 OR IFNULL(cwd, '') LIKE ?1 OR transcript LIKE ?1
+            OR notes LIKE ?1 OR started_at LIKE ?1 OR status LIKE ?1
+         ORDER BY id DESC LIMIT 40",
+    ) {
+        if let Ok(iter) = stmt.query_map(params![needle.as_str()], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, String>(6)?,
+            ))
+        }) {
+            for row in iter.flatten() {
+                let (id, started_at, ended_at, bytes, notes, status, transcript) = row;
+                let tags = error_tags(&transcript);
+                let mut row_html = session_row(id, &started_at, &ended_at, bytes, &notes, &status);
+                if !tags.is_empty() {
+                    row_html = row_html
+                        .replace("</span></a>", &format!(" {}</span></a>", tag_pills(&tags)));
+                }
+                out.push_str(&row_html);
+                rows += 1;
+            }
+        }
+    }
+
+    if rows == 0 {
+        out.push_str("<p class=\"empty\">No matching terminal memory found.</p>\n");
+    }
+    out.push_str("</div>\n");
+    out
+}
+
 fn session_row(
     id: i64,
     started_at: &str,
@@ -335,7 +429,7 @@ fn session_row(
          <span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} · {bytes} bytes</span></a>\n",
         esc(badge_text),
         esc(started_at),
-        esc(&format!("{label} · {notes}"))
+        esc_redacted(&format!("{label} · {notes}"))
     )
 }
 
@@ -402,7 +496,7 @@ fn project_page(raw_name: &str) -> String {
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc(&full_command(&argv_json, &cmd)), esc(&at), esc(&notes)
+                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&at), esc_redacted(&notes)
                 );
                 items.push((at, row));
             }
@@ -501,6 +595,9 @@ fn command_page(id: i64) -> Result<String, String> {
             None => "no exit code".to_string(),
         }
     ));
+    body.push_str(&tag_pills(&error_tags(&format!(
+        "{stdout}\n{stderr}\n{notes}"
+    ))));
     body.push_str("<div class=\"meta\">");
     if let Some(cwd) = &cwd {
         body.push_str(&format!("<div><span>cwd</span>{}</div>", esc(cwd)));
@@ -514,18 +611,25 @@ fn command_page(id: i64) -> Result<String, String> {
     body.push_str(&code_block(&argv.join(" ")));
     if !stdout.trim().is_empty() {
         body.push_str("<h2>Output</h2>\n");
-        body.push_str(&format!("<pre class=\"out\">{}</pre>\n", esc(&stdout)));
+        body.push_str(&format!(
+            "<pre class=\"out\">{}</pre>\n",
+            esc_redacted(&stdout)
+        ));
     }
     if !stderr.trim().is_empty() {
         body.push_str("<h2>Error log</h2>\n");
-        body.push_str(&format!("<pre class=\"err\">{}</pre>\n", esc(&stderr)));
+        body.push_str(&format!(
+            "<pre class=\"err\">{}</pre>\n",
+            esc_redacted(&stderr)
+        ));
     }
     if !notes.trim().is_empty() {
         body.push_str(&format!(
             "<h2>Note</h2>\n<p class=\"noteblock\">{}</p>\n",
-            esc(&notes)
+            esc_redacted(&notes)
         ));
     }
+    body.push_str(&debug_summary(&argv.join(" "), &stdout, &stderr, &notes));
     body.push_str(&hints(&conn, id, &command, ok));
     Ok(page(&format!("{} · MemoryWhale", command), &body))
 }
@@ -577,10 +681,18 @@ fn session_page(id: i64) -> Result<String, String> {
         "<div><span>size</span>{byte_count} bytes</div></div>\n"
     ));
     if !notes.trim().is_empty() {
-        body.push_str(&format!("<p class=\"noteblock\">{}</p>\n", esc(&notes)));
+        body.push_str(&format!(
+            "<p class=\"noteblock\">{}</p>\n",
+            esc_redacted(&notes)
+        ));
     }
+    body.push_str(&tag_pills(&error_tags(&transcript)));
+    body.push_str(&session_debug_summary(&transcript, &notes));
     body.push_str("<h2>Transcript</h2>\n");
-    body.push_str(&format!("<pre class=\"out\">{}</pre>\n", esc(&transcript)));
+    body.push_str(&format!(
+        "<pre class=\"out\">{}</pre>\n",
+        esc_redacted(&transcript)
+    ));
     Ok(page(&format!("Session {id} · MemoryWhale"), &body))
 }
 
@@ -788,6 +900,17 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+fn query_param(raw_path: &str, key: &str) -> Option<String> {
+    let query = raw_path.split_once('?')?.1;
+    for pair in query.split('&') {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        if percent_decode(k) == key {
+            return Some(percent_decode(&v.replace('+', " ")));
+        }
+    }
+    None
+}
+
 /// List all command runs for one command name (where a graph command node links).
 fn runs_page(raw: &str) -> String {
     let name = percent_decode(raw.trim_end_matches('/'));
@@ -823,7 +946,7 @@ fn runs_page(raw: &str) -> String {
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>\n",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc(&full_command(&argv_json, &name)), esc(&at), esc(&notes)
+                    esc_redacted(&full_command(&argv_json, &name)), esc(&at), esc_redacted(&notes)
                 ));
                 rows += 1;
             }
@@ -885,7 +1008,7 @@ cv.onclick=e=>{const rc=cv.getBoundingClientRect(),sx=W/rc.width,sy=H/rc.height,
 fn code_block(text: &str) -> String {
     format!(
         "<div class=\"codeblock\"><code>{}</code></div>\n",
-        esc(text)
+        esc_redacted(text)
     )
 }
 
@@ -910,6 +1033,9 @@ a{color:inherit;text-decoration:none}
 h1{font-size:2rem;margin:.1em 0 .3em;letter-spacing:-.02em}
 h2{font-size:.95rem;margin:1.8em 0 .6em;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 .sub{color:var(--muted);margin:0 0 1em}
+.search{display:flex;gap:8px;margin:18px 0 8px}
+.search input{flex:1;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px;font:600 .9rem ui-monospace,monospace;color:var(--ink)}
+.search button{border:0;border-radius:10px;background:var(--azure);color:#fff;padding:10px 14px;font:700 .85rem ui-monospace,monospace;cursor:pointer}
 .list{display:flex;flex-direction:column;gap:8px}
 .row{display:grid;grid-template-columns:90px 1fr 1.2fr 1.4fr;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px;transition:border-color .15s}
 .row:hover{border-color:var(--azure)}
@@ -923,6 +1049,8 @@ h2{font-size:.95rem;margin:1.8em 0 .6em;text-transform:uppercase;letter-spacing:
 .badge.live{background:#dff9f4;color:#087260}
 .badge.warn{background:#fff4d8;color:#9a5b00}
 .notice{background:#e9fbf7;border:1px solid #b7ebe0;border-left:4px solid var(--cyan);color:#0f5e57;border-radius:10px;padding:12px 14px;margin:0 0 16px;font-weight:650}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.tag{display:inline-flex;align-items:center;background:#fff4d8;color:#9a5b00;border:1px solid #f3d89a;border-radius:999px;padding:2px 8px;font:700 .7rem ui-monospace,monospace}
 .meta{display:flex;flex-wrap:wrap;gap:8px 24px;margin:16px 0;font-size:.9rem;color:var(--muted)}
 .meta span{display:block;font:600 .7rem ui-monospace,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--azure)}
 pre{background:#0b1c25;color:#e3f2f4;padding:16px;border-radius:10px;overflow:auto;font:.85rem/1.5 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word}
@@ -964,6 +1092,113 @@ fn esc(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
+}
+
+fn esc_redacted(s: &str) -> String {
+    esc(&redact_secrets(s))
+}
+
+fn redact_secrets(input: &str) -> String {
+    let mut out = input.to_string();
+    let patterns = [
+        (
+            r#"(?i)(api[_-]?key|token|password|passwd|secret|authorization)\s*[:=]\s*['"]?([^\s'"&]+)"#,
+            "$1=<redacted>",
+        ),
+        (r"(?i)Bearer\s+[A-Za-z0-9._\-]+", "Bearer <redacted>"),
+        (r"gh[pousr]_[A-Za-z0-9_]+", "<redacted-github-token>"),
+        (r"sk-[A-Za-z0-9_\-]{20,}", "<redacted-api-key>"),
+    ];
+    for (pattern, replacement) in patterns {
+        if let Ok(re) = Regex::new(pattern) {
+            out = re.replace_all(&out, replacement).into_owned();
+        }
+    }
+    out
+}
+
+fn error_tags(text: &str) -> Vec<&'static str> {
+    let lower = text.to_lowercase();
+    let mut tags = Vec::new();
+    let patterns = [
+        ("command not found", "command not found"),
+        ("permission denied", "permission denied"),
+        ("package not found", "package not found"),
+        ("no package", "package not found"),
+        ("failed to build", "failed to build"),
+        ("failed to compile", "failed to build"),
+        ("could not compile", "failed to build"),
+        ("address already in use", "port already in use"),
+        ("port already in use", "port already in use"),
+        ("no such file or directory", "no such file"),
+        ("not found", "not found"),
+    ];
+    for (needle, label) in patterns {
+        if lower.contains(needle) && !tags.contains(&label) {
+            tags.push(label);
+        }
+    }
+    tags
+}
+
+fn tag_pills(tags: &[&str]) -> String {
+    if tags.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("<span class=\"tags\">");
+    for tag in tags {
+        out.push_str(&format!("<span class=\"tag\">{}</span>", esc(tag)));
+    }
+    out.push_str("</span>");
+    out
+}
+
+fn debug_summary(command: &str, stdout: &str, stderr: &str, notes: &str) -> String {
+    let combined = format!("{stdout}\n{stderr}\n{notes}");
+    let tags = error_tags(&combined);
+    let mut next = Vec::new();
+    if tags.contains(&"command not found") {
+        next.push("Verify the command is installed and available on PATH.");
+    }
+    if tags.contains(&"permission denied") {
+        next.push("Check file permissions, executable bits, or whether sudo is actually required.");
+    }
+    if tags.contains(&"package not found") {
+        next.push("Update package indexes and confirm the package name for this OS/architecture.");
+    }
+    if tags.contains(&"failed to build") {
+        next.push("Read the first compiler error above, then rerun the narrowest build command.");
+    }
+    if tags.contains(&"port already in use") {
+        next.push("Find the process using the port or choose a different port.");
+    }
+    if next.is_empty() {
+        next.push("Search for the most recent related failed command, then compare it with the next successful run.");
+    }
+
+    format!(
+        "<h2>Local debug summary</h2><div class=\"hint\">\
+         <p><strong>What happened?</strong> MemoryWhale recorded <code>{}</code> with its output, error log, notes, and timestamp.</p>\
+         <p><strong>What failed?</strong> {}</p>\
+         <p><strong>What was tried?</strong> {}</p>\
+         <p><strong>Try next:</strong> {}</p></div>\n",
+        esc_redacted(command),
+        if tags.is_empty() { "No common failure pattern was detected.".to_string() } else { esc(&tags.join(", ")) },
+        if notes.trim().is_empty() { "No note was attached to this run.".to_string() } else { esc_redacted(notes) },
+        esc(&next.join(" "))
+    )
+}
+
+fn session_debug_summary(transcript: &str, notes: &str) -> String {
+    let tags = error_tags(transcript);
+    format!(
+        "<h2>Local debug summary</h2><div class=\"hint\">\
+         <p><strong>What happened?</strong> MemoryWhale saved a terminal session transcript for later debugging.</p>\
+         <p><strong>Detected issues:</strong> {}</p>\
+         <p><strong>Context:</strong> {}</p></div>\n",
+        if tags.is_empty() { "No common failure pattern was detected.".to_string() } else { esc(&tags.join(", ")) },
+        if notes.trim().is_empty() { "No session note was attached.".to_string() } else { esc_redacted(notes) }
+    )
 }
 
 fn init_min_schema(conn: &Connection) -> Result<(), String> {
