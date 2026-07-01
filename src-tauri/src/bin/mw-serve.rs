@@ -20,7 +20,10 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::SystemTime;
+
+static STARTUP_NOTICE: OnceLock<String> = OnceLock::new();
 
 fn main() {
     if let Err(err) = run() {
@@ -36,7 +39,9 @@ fn run() -> Result<(), String> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
-                println!("mw-serve [--host <addr>] [--port <n>]  — serve memory as a web dashboard");
+                println!(
+                    "mw-serve [--host <addr>] [--port <n>]  — serve memory as a web dashboard"
+                );
                 return Ok(());
             }
             "--host" => host = args.next().unwrap_or(host),
@@ -55,9 +60,37 @@ fn run() -> Result<(), String> {
     // Self-heal: import any session transcripts whose recording was interrupted
     // before it could write its database row.
     match recover_orphans() {
-        Ok(n) if n > 0 => println!("Recovered {n} interrupted session(s) from transcripts."),
+        Ok(report) => {
+            if report.recovered > 0 {
+                println!(
+                    "Recovered {} interrupted session(s) from transcripts.",
+                    report.recovered
+                );
+            }
+            if report.deleted_empty > 0 {
+                println!(
+                    "Removed {} empty 0-byte transcript(s).",
+                    report.deleted_empty
+                );
+            }
+            if report.recovered > 0 || report.deleted_empty > 0 {
+                let mut parts = Vec::new();
+                if report.recovered > 0 {
+                    parts.push(format!(
+                        "{} interrupted session(s) recovered",
+                        report.recovered
+                    ));
+                }
+                if report.deleted_empty > 0 {
+                    parts.push(format!(
+                        "{} empty 0-byte transcript(s) cleaned",
+                        report.deleted_empty
+                    ));
+                }
+                let _ = STARTUP_NOTICE.set(parts.join(" · "));
+            }
+        }
         Err(e) => eprintln!("mw-serve: recovery skipped: {e}"),
-        _ => {}
     }
 
     let listener = TcpListener::bind((host.as_str(), port))
@@ -123,7 +156,10 @@ fn route(path: &str) -> (&'static str, String) {
         if let Ok(id) = rest.parse::<i64>() {
             return match command_page(id) {
                 Ok(html) => ("200 OK", html),
-                Err(e) => ("404 Not Found", page("Not found", &format!("<p>{}</p>", esc(&e)))),
+                Err(e) => (
+                    "404 Not Found",
+                    page("Not found", &format!("<p>{}</p>", esc(&e))),
+                ),
             };
         }
     }
@@ -131,21 +167,39 @@ fn route(path: &str) -> (&'static str, String) {
         if let Ok(id) = rest.parse::<i64>() {
             return match session_page(id) {
                 Ok(html) => ("200 OK", html),
-                Err(e) => ("404 Not Found", page("Not found", &format!("<p>{}</p>", esc(&e)))),
+                Err(e) => (
+                    "404 Not Found",
+                    page("Not found", &format!("<p>{}</p>", esc(&e))),
+                ),
             };
         }
     }
-    ("404 Not Found", page("Not found", "<p>Nothing here. <a href=\"/\">Back to dashboard</a></p>"))
+    (
+        "404 Not Found",
+        page(
+            "Not found",
+            "<p>Nothing here. <a href=\"/\">Back to dashboard</a></p>",
+        ),
+    )
 }
 
 fn dashboard() -> String {
     let conn = match open_db() {
         Ok(c) => c,
-        Err(e) => return page("MemoryWhale", &format!("<p>Could not open database: {}</p>", esc(&e))),
+        Err(e) => {
+            return page(
+                "MemoryWhale",
+                &format!("<p>Could not open database: {}</p>", esc(&e)),
+            )
+        }
     };
     let _ = init_min_schema(&conn);
 
-    let mut body = String::from("<div class=\"eyebrow\">MemoryWhale</div>\n<h1>Terminal memory</h1>\n");
+    let mut body =
+        String::from("<div class=\"eyebrow\">MemoryWhale</div>\n<h1>Terminal memory</h1>\n");
+    if let Some(notice) = STARTUP_NOTICE.get() {
+        body.push_str(&format!("<div class=\"notice\">{}</div>\n", esc(notice)));
+    }
     body.push_str("<p class=\"sub\">Your previous commands and recorded sessions, served locally. <a class=\"glink\" href=\"/graph\">open graph view →</a></p>\n");
 
     let projects = project_counts(&conn);
@@ -204,24 +258,21 @@ fn dashboard() -> String {
     body.push_str("<h2>Sessions</h2>\n<div class=\"list\">\n");
     let mut srows = 0;
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, started_at, byte_count, notes FROM sessions ORDER BY id DESC LIMIT 200",
+        "SELECT id, started_at, ended_at, byte_count, notes, status FROM sessions ORDER BY id DESC LIMIT 200",
     ) {
         if let Ok(iter) = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, String>(3)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
             ))
         }) {
             for row in iter.flatten() {
-                let (id, at, bytes, notes) = row;
-                body.push_str(&format!(
-                    "<a class=\"row\" href=\"/session/{id}\"><span class=\"badge sess\">session</span>\
-                     <span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} · {bytes} bytes</span></a>\n",
-                    esc(&at),
-                    esc(&notes)
-                ));
+                let (id, at, ended_at, bytes, notes, status) = row;
+                body.push_str(&session_row(id, &at, &ended_at, bytes, &notes, &status));
                 srows += 1;
             }
         }
@@ -243,7 +294,10 @@ fn project_of(notes: &str) -> Option<String> {
 /// Count how many command runs + sessions belong to each project tag.
 fn project_counts(conn: &Connection) -> HashMap<String, i64> {
     let mut counts: HashMap<String, i64> = HashMap::new();
-    for sql in ["SELECT notes FROM command_runs", "SELECT notes FROM sessions"] {
+    for sql in [
+        "SELECT notes FROM command_runs",
+        "SELECT notes FROM sessions",
+    ] {
         if let Ok(mut stmt) = conn.prepare(sql) {
             if let Ok(it) = stmt.query_map([], |r| r.get::<_, String>(0)) {
                 for notes in it.flatten() {
@@ -255,6 +309,62 @@ fn project_counts(conn: &Connection) -> HashMap<String, i64> {
         }
     }
     counts
+}
+
+fn session_row(
+    id: i64,
+    started_at: &str,
+    ended_at: &str,
+    bytes: i64,
+    notes: &str,
+    status: &str,
+) -> String {
+    let badge_class = match status {
+        "recording" if session_age_seconds(ended_at).map_or(false, |age| age <= 30) => "live",
+        "recording" | "interrupted" => "warn",
+        _ => "sess",
+    };
+    let label = session_label(status, ended_at);
+    let badge_text = match badge_class {
+        "live" => "live",
+        "warn" => "interrupted",
+        _ => "session",
+    };
+    format!(
+        "<a class=\"row\" href=\"/session/{id}\"><span class=\"badge {badge_class}\">{}</span>\
+         <span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} · {bytes} bytes</span></a>\n",
+        esc(badge_text),
+        esc(started_at),
+        esc(&format!("{label} · {notes}"))
+    )
+}
+
+fn session_label(status: &str, ended_at: &str) -> String {
+    match status {
+        "recording" => match session_age_seconds(ended_at) {
+            Some(age) if age <= 30 => format!("Recording now · last autosaved {age}s ago"),
+            Some(age) => format!("Interrupted or stale · last autosaved {}", human_age(age)),
+            None => "Recording now".to_string(),
+        },
+        "interrupted" => "Recovered interrupted".to_string(),
+        _ => "session".to_string(),
+    }
+}
+
+fn session_age_seconds(ended_at: &str) -> Option<i64> {
+    DateTime::parse_from_rfc3339(ended_at)
+        .ok()
+        .map(|dt| (Utc::now() - dt.with_timezone(&Utc)).num_seconds().max(0))
+}
+
+fn human_age(seconds: i64) -> String {
+    if seconds < 60 {
+        format!("{seconds}s ago")
+    } else if seconds < 3600 {
+        format!("{}m ago", seconds / 60)
+    } else {
+        format!("{}h ago", seconds / 3600)
+    }
 }
 
 /// A combined, time-ordered view of every command run and session tagged with a
@@ -269,8 +379,8 @@ fn project_page(raw_name: &str) -> String {
 
     let mut items: Vec<(String, String)> = Vec::new(); // (timestamp, row html)
 
-    if let Ok(mut stmt) =
-        conn.prepare("SELECT id, command, argv_json, exit_code, created_at, notes FROM command_runs")
+    if let Ok(mut stmt) = conn
+        .prepare("SELECT id, command, argv_json, exit_code, created_at, notes FROM command_runs")
     {
         if let Ok(it) = stmt.query_map([], |r| {
             Ok((
@@ -300,25 +410,23 @@ fn project_page(raw_name: &str) -> String {
     }
 
     if let Ok(mut stmt) =
-        conn.prepare("SELECT id, started_at, byte_count, notes FROM sessions")
+        conn.prepare("SELECT id, started_at, ended_at, byte_count, notes, status FROM sessions")
     {
         if let Ok(it) = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, String>(3)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
             ))
         }) {
-            for (id, at, bytes, notes) in it.flatten() {
+            for (id, at, ended_at, bytes, notes, status) in it.flatten() {
                 if project_of(&notes).as_deref() != Some(name.as_str()) {
                     continue;
                 }
-                let row = format!(
-                    "<a class=\"row\" href=\"/session/{id}\"><span class=\"badge sess\">session</span>\
-                     <span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} · {bytes} bytes</span></a>",
-                    esc(&at), esc(&notes)
-                );
+                let row = session_row(id, &at, &ended_at, bytes, &notes, &status);
                 items.push((at, row));
             }
         }
@@ -327,7 +435,10 @@ fn project_page(raw_name: &str) -> String {
     items.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
 
     let mut body = String::from("<a class=\"back\" href=\"/\">← all memory</a>\n");
-    body.push_str(&format!("<div class=\"eyebrow\">project</div>\n<h1>{}</h1>\n", esc(&name)));
+    body.push_str(&format!(
+        "<div class=\"eyebrow\">project</div>\n<h1>{}</h1>\n",
+        esc(&name)
+    ));
     body.push_str(&format!(
         "<p class=\"sub\">{} memory item(s) across all terminals, newest first.</p>\n",
         items.len()
@@ -372,19 +483,32 @@ fn command_page(id: i64) -> Result<String, String> {
         .map_err(|e| format!("read command run: {e}"))?
         .ok_or_else(|| format!("no command run #{id}"))?;
     let (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at) = row;
-    let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_else(|_| vec![command.clone()]);
+    let argv: Vec<String> =
+        serde_json::from_str(&argv_json).unwrap_or_else(|_| vec![command.clone()]);
     let ok = exit_code == Some(0);
 
     let mut body = String::from("<a class=\"back\" href=\"/\">← all memory</a>\n");
-    body.push_str(&format!("<div class=\"eyebrow\">command run · #{id}</div>\n<h1>{}</h1>\n", esc(&command)));
+    body.push_str(&format!(
+        "<div class=\"eyebrow\">command run · #{id}</div>\n<h1>{}</h1>\n",
+        esc(&command)
+    ));
     body.push_str(&format!(
         "<div class=\"badge {}\">{}</div>\n",
         if ok { "ok" } else { "bad" },
-        match exit_code { Some(0) => "exit 0 · success".to_string(), Some(c) => format!("exit {c} · failed"), None => "no exit code".to_string() }
+        match exit_code {
+            Some(0) => "exit 0 · success".to_string(),
+            Some(c) => format!("exit {c} · failed"),
+            None => "no exit code".to_string(),
+        }
     ));
     body.push_str("<div class=\"meta\">");
-    if let Some(cwd) = &cwd { body.push_str(&format!("<div><span>cwd</span>{}</div>", esc(cwd))); }
-    body.push_str(&format!("<div><span>when</span>{}</div></div>\n", esc(&created_at)));
+    if let Some(cwd) = &cwd {
+        body.push_str(&format!("<div><span>cwd</span>{}</div>", esc(cwd)));
+    }
+    body.push_str(&format!(
+        "<div><span>when</span>{}</div></div>\n",
+        esc(&created_at)
+    ));
 
     body.push_str("<h2>Command</h2>\n");
     body.push_str(&code_block(&argv.join(" ")));
@@ -397,7 +521,10 @@ fn command_page(id: i64) -> Result<String, String> {
         body.push_str(&format!("<pre class=\"err\">{}</pre>\n", esc(&stderr)));
     }
     if !notes.trim().is_empty() {
-        body.push_str(&format!("<h2>Note</h2>\n<p class=\"noteblock\">{}</p>\n", esc(&notes)));
+        body.push_str(&format!(
+            "<h2>Note</h2>\n<p class=\"noteblock\">{}</p>\n",
+            esc(&notes)
+        ));
     }
     body.push_str(&hints(&conn, id, &command, ok));
     Ok(page(&format!("{} · MemoryWhale", command), &body))
@@ -407,7 +534,7 @@ fn session_page(id: i64) -> Result<String, String> {
     let conn = open_db()?;
     let row = conn
         .query_row(
-            "SELECT shell, cwd, notes, started_at, byte_count, transcript FROM sessions WHERE id = ?1",
+            "SELECT shell, cwd, notes, started_at, ended_at, byte_count, transcript, status FROM sessions WHERE id = ?1",
             params![id],
             |r| {
                 Ok((
@@ -415,23 +542,40 @@ fn session_page(id: i64) -> Result<String, String> {
                     r.get::<_, Option<String>>(1)?,
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
-                    r.get::<_, i64>(4)?,
-                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, i64>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, String>(7)?,
                 ))
             },
         )
         .optional()
         .map_err(|e| format!("read session: {e}"))?
         .ok_or_else(|| format!("no session #{id}"))?;
-    let (shell, cwd, notes, started_at, byte_count, transcript) = row;
+    let (shell, cwd, notes, started_at, ended_at, byte_count, transcript, status) = row;
 
     let mut body = String::from("<a class=\"back\" href=\"/\">← all memory</a>\n");
-    body.push_str(&format!("<div class=\"eyebrow\">recorded session · #{id}</div>\n<h1>Session {id}</h1>\n"));
+    body.push_str(&format!(
+        "<div class=\"eyebrow\">recorded session · #{id}</div>\n<h1>Session {id}</h1>\n"
+    ));
     body.push_str("<div class=\"meta\">");
-    if let Some(shell) = &shell { body.push_str(&format!("<div><span>shell</span>{}</div>", esc(shell))); }
-    if let Some(cwd) = &cwd { body.push_str(&format!("<div><span>cwd</span>{}</div>", esc(cwd))); }
-    body.push_str(&format!("<div><span>started</span>{}</div>", esc(&started_at)));
-    body.push_str(&format!("<div><span>size</span>{byte_count} bytes</div></div>\n"));
+    if let Some(shell) = &shell {
+        body.push_str(&format!("<div><span>shell</span>{}</div>", esc(shell)));
+    }
+    if let Some(cwd) = &cwd {
+        body.push_str(&format!("<div><span>cwd</span>{}</div>", esc(cwd)));
+    }
+    body.push_str(&format!(
+        "<div><span>started</span>{}</div>",
+        esc(&started_at)
+    ));
+    body.push_str(&format!(
+        "<div><span>status</span>{}</div>",
+        esc(&session_label(&status, &ended_at))
+    ));
+    body.push_str(&format!(
+        "<div><span>size</span>{byte_count} bytes</div></div>\n"
+    ));
     if !notes.trim().is_empty() {
         body.push_str(&format!("<p class=\"noteblock\">{}</p>\n", esc(&notes)));
     }
@@ -458,7 +602,10 @@ fn hints(conn: &Connection, id: i64, command: &str, ok: bool) -> String {
                 )
                 .unwrap_or(0);
             items.push((
-                format!("You've run `{command}` {total} time(s) — {} succeeded, {failures} failed.", total - failures),
+                format!(
+                    "You've run `{command}` {total} time(s) — {} succeeded, {failures} failed.",
+                    total - failures
+                ),
                 None,
             ));
         }
@@ -580,7 +727,10 @@ fn graph_json() -> Result<String, String> {
                 None => continue,
             };
             *arg_count.entry(value.clone()).or_insert(0) += 1;
-            arg_cmds.entry(value.clone()).or_default().insert(cmd.clone());
+            arg_cmds
+                .entry(value.clone())
+                .or_default()
+                .insert(cmd.clone());
             pairs.insert((cmd, value));
         }
     }
@@ -600,7 +750,11 @@ fn graph_json() -> Result<String, String> {
         nodes.push(GNode {
             id: format!("arg:{val}"),
             label: val.clone(),
-            kind: if shared { "bridge".into() } else { "arg".into() },
+            kind: if shared {
+                "bridge".into()
+            } else {
+                "arg".into()
+            },
             weight: *count,
             name: None,
         });
@@ -644,7 +798,10 @@ fn runs_page(raw: &str) -> String {
     let _ = init_min_schema(&conn);
 
     let mut body = String::from("<a class=\"back\" href=\"/graph\">← graph</a>\n");
-    body.push_str(&format!("<div class=\"eyebrow\">command</div>\n<h1>{}</h1>\n", esc(&name)));
+    body.push_str(&format!(
+        "<div class=\"eyebrow\">command</div>\n<h1>{}</h1>\n",
+        esc(&name)
+    ));
     body.push_str("<div class=\"list\">\n");
     let mut rows = 0;
     if let Ok(mut stmt) = conn.prepare(
@@ -726,7 +883,10 @@ cv.onclick=e=>{const rc=cv.getBoundingClientRect(),sx=W/rc.width,sy=H/rc.height,
 "#;
 
 fn code_block(text: &str) -> String {
-    format!("<div class=\"codeblock\"><code>{}</code></div>\n", esc(text))
+    format!(
+        "<div class=\"codeblock\"><code>{}</code></div>\n",
+        esc(text)
+    )
 }
 
 fn page(title: &str, body: &str) -> String {
@@ -760,6 +920,9 @@ h2{font-size:.95rem;margin:1.8em 0 .6em;text-transform:uppercase;letter-spacing:
 .badge.ok{background:#e6f6ef;color:var(--ok)}
 .badge.bad{background:#fceee7;color:var(--bad)}
 .badge.sess{background:#eaeefe;color:var(--azure)}
+.badge.live{background:#dff9f4;color:#087260}
+.badge.warn{background:#fff4d8;color:#9a5b00}
+.notice{background:#e9fbf7;border:1px solid #b7ebe0;border-left:4px solid var(--cyan);color:#0f5e57;border-radius:10px;padding:12px 14px;margin:0 0 16px;font-weight:650}
 .meta{display:flex;flex-wrap:wrap;gap:8px 24px;margin:16px 0;font-size:.9rem;color:var(--muted)}
 .meta span{display:block;font:600 .7rem ui-monospace,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--azure)}
 pre{background:#0b1c25;color:#e3f2f4;padding:16px;border-radius:10px;overflow:auto;font:.85rem/1.5 ui-monospace,monospace;white-space:pre-wrap;word-break:break-word}
@@ -796,7 +959,11 @@ fn full_command(argv_json: &str, fallback: &str) -> String {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn init_min_schema(conn: &Connection) -> Result<(), String> {
@@ -807,16 +974,30 @@ fn init_min_schema(conn: &Connection) -> Result<(), String> {
          CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY, shell TEXT, cwd TEXT,
             transcript_path TEXT NOT NULL DEFAULT '', transcript TEXT NOT NULL DEFAULT '',
             notes TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL DEFAULT '',
-            ended_at TEXT NOT NULL DEFAULT '', byte_count INTEGER NOT NULL DEFAULT 0);",
+            ended_at TEXT NOT NULL DEFAULT '', byte_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'finished');",
     )
-    .map_err(|e| format!("init schema: {e}"))
+    .map_err(|e| format!("init schema: {e}"))?;
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'finished'",
+        [],
+    );
+    Ok(())
 }
 
 /// Import every session `.log` that has no row yet (interrupted recordings).
-fn recover_orphans() -> Result<usize, String> {
-    let sessions_dir = data_base()?.join("MemoryWhale").join("sessions");
+struct RecoveryReport {
+    recovered: usize,
+    deleted_empty: usize,
+}
+
+fn recover_orphans() -> Result<RecoveryReport, String> {
+    let sessions_dir = memorywhale_dir()?.join("sessions");
     if !sessions_dir.exists() {
-        return Ok(0);
+        return Ok(RecoveryReport {
+            recovered: 0,
+            deleted_empty: 0,
+        });
     }
     let conn = open_db()?;
     init_min_schema(&conn)?;
@@ -829,13 +1010,18 @@ fn recover_orphans() -> Result<usize, String> {
     entries.sort();
 
     let mut recovered = 0;
+    let mut deleted_empty = 0;
     for path in entries {
         let path_str = match path.to_str() {
             Some(s) => s.to_string(),
             None => continue,
         };
         let already: i64 = conn
-            .query_row("SELECT COUNT(*) FROM sessions WHERE transcript_path = ?1", params![path_str], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE transcript_path = ?1",
+                params![path_str],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
         if already > 0 {
             continue;
@@ -844,12 +1030,18 @@ fn recover_orphans() -> Result<usize, String> {
             Ok(b) => b,
             Err(_) => continue,
         };
+        if raw.is_empty() {
+            if fs::remove_file(&path).is_ok() {
+                deleted_empty += 1;
+            }
+            continue;
+        }
         let cleaned = clean_transcript(&String::from_utf8_lossy(&raw));
         let started = started_from_filename(&path).unwrap_or_else(|| mtime_rfc3339(&path));
         let ended = mtime_rfc3339(&path);
         conn.execute(
-            "INSERT INTO sessions (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO sessions (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'interrupted')",
             params![
                 Option::<String>::None, Option::<String>::None, path_str, cleaned,
                 "recovered from transcript (recording was interrupted before saving)",
@@ -859,21 +1051,34 @@ fn recover_orphans() -> Result<usize, String> {
         .map_err(|e| format!("insert recovered session: {e}"))?;
         recovered += 1;
     }
-    Ok(recovered)
+    Ok(RecoveryReport {
+        recovered,
+        deleted_empty,
+    })
 }
 
 fn started_from_filename(path: &Path) -> Option<String> {
     let stamp = path.file_stem()?.to_str()?.strip_prefix("session-")?;
-    let re = Regex::new(r"^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(\.\d+)?([+-]\d{2})-(\d{2})$").ok()?;
+    let re =
+        Regex::new(r"^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(\.\d+)?([+-]\d{2})-(\d{2})$")
+            .ok()?;
     let c = re.captures(stamp)?;
     Some(format!(
         "{}T{}:{}:{}{}{}:{}",
-        &c[1], &c[2], &c[3], &c[4], c.get(5).map(|m| m.as_str()).unwrap_or(""), &c[6], &c[7]
+        &c[1],
+        &c[2],
+        &c[3],
+        &c[4],
+        c.get(5).map(|m| m.as_str()).unwrap_or(""),
+        &c[6],
+        &c[7]
     ))
 }
 
 fn mtime_rfc3339(path: &Path) -> String {
-    let t = fs::metadata(path).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+    let t = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH);
     DateTime::<Utc>::from(t).to_rfc3339()
 }
 
@@ -896,11 +1101,18 @@ fn open_db() -> Result<Connection, String> {
 }
 
 fn database_path() -> Result<PathBuf, String> {
-    Ok(data_base()?.join("MemoryWhale").join("memorywhale.sqlite3"))
+    Ok(memorywhale_dir()?.join("memorywhale.sqlite3"))
 }
 
 fn data_base() -> Result<PathBuf, String> {
     dirs::data_local_dir()
         .or_else(dirs::home_dir)
         .ok_or_else(|| "could not resolve local data directory".to_string())
+}
+
+fn memorywhale_dir() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("MEMORYWHALE_DATA_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(data_base()?.join("MemoryWhale"))
 }

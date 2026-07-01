@@ -19,13 +19,26 @@ use std::time::SystemTime;
 fn main() {
     let quiet = std::env::args().any(|a| a == "--quiet");
     match recover_orphans(!quiet) {
-        Ok(n) => {
+        Ok(report) => {
             if quiet {
-                println!("{n}");
-            } else if n == 0 {
-                println!("mw-recover: nothing to recover — all session transcripts are already saved.");
+                println!("{}", report.recovered);
+            } else if report.recovered == 0 && report.deleted_empty == 0 {
+                println!(
+                    "mw-recover: nothing to recover — all session transcripts are already saved."
+                );
             } else {
-                println!("mw-recover: recovered {n} interrupted session(s).");
+                if report.recovered > 0 {
+                    println!(
+                        "mw-recover: recovered {} interrupted session(s).",
+                        report.recovered
+                    );
+                }
+                if report.deleted_empty > 0 {
+                    println!(
+                        "mw-recover: removed {} empty 0-byte transcript(s).",
+                        report.deleted_empty
+                    );
+                }
             }
         }
         Err(err) => {
@@ -35,14 +48,23 @@ fn main() {
     }
 }
 
-/// Import every `.log` in the sessions dir that has no row yet. Returns how many
-/// were recovered. Safe to call repeatedly — already-imported files are skipped.
-pub fn recover_orphans(verbose: bool) -> Result<usize, String> {
-    let sessions_dir = data_base()?.join("MemoryWhale").join("sessions");
+pub struct RecoveryReport {
+    pub recovered: usize,
+    pub deleted_empty: usize,
+}
+
+/// Import every non-empty `.log` in the sessions dir that has no row yet.
+/// Empty 0-byte logs are deleted so they do not clutter the dashboard.
+/// Safe to call repeatedly — already-imported files are skipped.
+pub fn recover_orphans(verbose: bool) -> Result<RecoveryReport, String> {
+    let sessions_dir = memorywhale_dir()?.join("sessions");
     if !sessions_dir.exists() {
-        return Ok(0);
+        return Ok(RecoveryReport {
+            recovered: 0,
+            deleted_empty: 0,
+        });
     }
-    let db_path = data_base()?.join("MemoryWhale").join("memorywhale.sqlite3");
+    let db_path = memorywhale_dir()?.join("memorywhale.sqlite3");
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create data dir: {e}"))?;
     }
@@ -50,6 +72,7 @@ pub fn recover_orphans(verbose: bool) -> Result<usize, String> {
     init_schema(&conn)?;
 
     let mut recovered = 0;
+    let mut deleted_empty = 0;
     let mut entries: Vec<PathBuf> = fs::read_dir(&sessions_dir)
         .map_err(|e| format!("read sessions dir: {e}"))?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -78,13 +101,22 @@ pub fn recover_orphans(verbose: bool) -> Result<usize, String> {
             Err(_) => continue,
         };
         let byte_count = raw.len() as i64;
+        if byte_count == 0 {
+            if fs::remove_file(&path).is_ok() {
+                deleted_empty += 1;
+                if verbose {
+                    println!("  removed empty {}", path.display());
+                }
+            }
+            continue;
+        }
         let cleaned = clean_transcript(&String::from_utf8_lossy(&raw));
         let started_at = started_from_filename(&path).unwrap_or_else(|| mtime_rfc3339(&path));
         let ended_at = mtime_rfc3339(&path);
 
         conn.execute(
-            "INSERT INTO sessions (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO sessions (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'interrupted')",
             params![
                 Option::<String>::None,
                 Option::<String>::None,
@@ -102,18 +134,29 @@ pub fn recover_orphans(verbose: bool) -> Result<usize, String> {
             println!("  recovered {}", path.display());
         }
     }
-    Ok(recovered)
+    Ok(RecoveryReport {
+        recovered,
+        deleted_empty,
+    })
 }
 
 fn started_from_filename(path: &std::path::Path) -> Option<String> {
     let name = path.file_stem()?.to_str()?;
     let stamp = name.strip_prefix("session-")?;
     // <date>T<HH>-<MM>-<SS>[.frac]<+/-TZH>-<TZM>  ->  RFC3339 with colons restored
-    let re = Regex::new(r"^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(\.\d+)?([+-]\d{2})-(\d{2})$").ok()?;
+    let re =
+        Regex::new(r"^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})(\.\d+)?([+-]\d{2})-(\d{2})$")
+            .ok()?;
     let c = re.captures(stamp)?;
     Some(format!(
         "{}T{}:{}:{}{}{}:{}",
-        &c[1], &c[2], &c[3], &c[4], c.get(5).map(|m| m.as_str()).unwrap_or(""), &c[6], &c[7]
+        &c[1],
+        &c[2],
+        &c[3],
+        &c[4],
+        c.get(5).map(|m| m.as_str()).unwrap_or(""),
+        &c[6],
+        &c[7]
     ))
 }
 
@@ -140,13 +183,26 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         "CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY, shell TEXT, cwd TEXT,
             transcript_path TEXT NOT NULL DEFAULT '', transcript TEXT NOT NULL DEFAULT '',
             notes TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL DEFAULT '',
-            ended_at TEXT NOT NULL DEFAULT '', byte_count INTEGER NOT NULL DEFAULT 0);",
+            ended_at TEXT NOT NULL DEFAULT '', byte_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'finished');",
     )
-    .map_err(|e| format!("init schema: {e}"))
+    .map_err(|e| format!("init schema: {e}"))?;
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'finished'",
+        [],
+    );
+    Ok(())
 }
 
 fn data_base() -> Result<PathBuf, String> {
     dirs::data_local_dir()
         .or_else(dirs::home_dir)
         .ok_or_else(|| "could not resolve local data directory".to_string())
+}
+
+fn memorywhale_dir() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("MEMORYWHALE_DATA_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(data_base()?.join("MemoryWhale"))
 }

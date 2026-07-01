@@ -189,7 +189,8 @@ fn render_command(conn: &Connection, id: i64) -> Result<String, String> {
         .ok_or_else(|| format!("no command run #{id}"))?;
     let (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at) = row;
 
-    let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_else(|_| vec![command.clone()]);
+    let argv: Vec<String> =
+        serde_json::from_str(&argv_json).unwrap_or_else(|_| vec![command.clone()]);
     let full_cmd = argv.join(" ");
     let ok = exit_code == Some(0);
 
@@ -285,7 +286,9 @@ fn command_hints(conn: &Connection, id: i64, command: &str, ok: bool) -> Result<
             let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_default();
             if !argv.is_empty() {
                 hints.push(Hint {
-                    text: format!("A previous run of `{command}` succeeded — try that exact command:"),
+                    text: format!(
+                        "A previous run of `{command}` succeeded — try that exact command:"
+                    ),
                     snippet: Some(argv.join(" ")),
                 });
             }
@@ -314,7 +317,11 @@ fn command_hints(conn: &Connection, id: i64, command: &str, ok: bool) -> Result<
                 .map_err(|e| format!("find next: {e}"))?
             {
                 let argv: Vec<String> = serde_json::from_str(&next_argv).unwrap_or_default();
-                let line = if argv.is_empty() { next_cmd } else { argv.join(" ") };
+                let line = if argv.is_empty() {
+                    next_cmd
+                } else {
+                    argv.join(" ")
+                };
                 hints.push(Hint {
                     text: "Last time this command failed, the next thing you ran was:".to_string(),
                     snippet: Some(line),
@@ -360,7 +367,10 @@ fn render_session(conn: &Connection, id: i64) -> Result<String, String> {
     if let Some(cwd) = &cwd {
         body.push_str(&format!("<div><span>cwd</span>{}</div>", esc(cwd)));
     }
-    body.push_str(&format!("<div><span>started</span>{}</div>", esc(&started_at)));
+    body.push_str(&format!(
+        "<div><span>started</span>{}</div>",
+        esc(&started_at)
+    ));
     body.push_str(&format!("<div><span>size</span>{byte_count} bytes</div>"));
     body.push_str("</div>\n");
 
@@ -496,9 +506,15 @@ fn init_min_schema(conn: &Connection) -> Result<(), String> {
          CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY, shell TEXT, cwd TEXT,
             transcript_path TEXT NOT NULL DEFAULT '', transcript TEXT NOT NULL DEFAULT '',
             notes TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL DEFAULT '',
-            ended_at TEXT NOT NULL DEFAULT '', byte_count INTEGER NOT NULL DEFAULT 0);",
+            ended_at TEXT NOT NULL DEFAULT '', byte_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'finished');",
     )
-    .map_err(|e| format!("init schema: {e}"))
+    .map_err(|e| format!("init schema: {e}"))?;
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'finished'",
+        [],
+    );
+    Ok(())
 }
 
 fn open_db() -> Result<Connection, String> {
@@ -508,15 +524,22 @@ fn open_db() -> Result<Connection, String> {
 }
 
 fn views_dir() -> Result<PathBuf, String> {
-    Ok(data_base()?.join("MemoryWhale").join("views"))
+    Ok(memorywhale_dir()?.join("views"))
 }
 
 fn database_path() -> Result<PathBuf, String> {
-    Ok(data_base()?.join("MemoryWhale").join("memorywhale.sqlite3"))
+    Ok(memorywhale_dir()?.join("memorywhale.sqlite3"))
 }
 
 fn data_base() -> Result<PathBuf, String> {
     dirs::data_local_dir()
         .or_else(dirs::home_dir)
         .ok_or_else(|| "could not resolve local data directory".to_string())
+}
+
+fn memorywhale_dir() -> Result<PathBuf, String> {
+    if let Some(path) = env::var_os("MEMORYWHALE_DATA_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    Ok(data_base()?.join("MemoryWhale"))
 }

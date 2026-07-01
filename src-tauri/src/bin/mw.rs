@@ -131,7 +131,8 @@ fn record_session(notes: String, live: bool) -> Result<(), String> {
         return Err("recording produced no transcript (session not saved)".to_string());
     }
     let (id, byte_count) = if let Some(id) = live_session {
-        let byte_count = update_session_from_transcript(id, &transcript_path, &ended_at)?;
+        let byte_count =
+            update_session_from_transcript(id, &transcript_path, &ended_at, "finished")?;
         (id, byte_count)
     } else {
         insert_finished_session(
@@ -187,8 +188,8 @@ fn insert_live_session(draft: &SessionDraft<'_>) -> Result<i64, String> {
     conn.execute(
         "
         INSERT INTO sessions
-            (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count)
-        VALUES (?1, ?2, ?3, '', ?4, ?5, ?5, 0)
+            (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count, status)
+        VALUES (?1, ?2, ?3, '', ?4, ?5, ?5, 0, 'recording')
         ",
         params![
             draft.shell,
@@ -215,8 +216,8 @@ fn insert_finished_session(
     conn.execute(
         "
         INSERT INTO sessions
-            (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count, status)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'finished')
         ",
         params![
             draft.shell,
@@ -243,7 +244,7 @@ fn start_live_sync(id: i64, transcript_path: PathBuf) -> LiveSync {
                 break;
             }
             let ended_at = Utc::now().to_rfc3339();
-            let _ = update_session_from_transcript(id, &transcript_path, &ended_at);
+            let _ = update_session_from_transcript(id, &transcript_path, &ended_at, "recording");
         }
     });
     LiveSync { stop, handle }
@@ -253,6 +254,7 @@ fn update_session_from_transcript(
     id: i64,
     transcript_path: &PathBuf,
     ended_at: &str,
+    status: &str,
 ) -> Result<i64, String> {
     let raw = match fs::read(transcript_path) {
         Ok(raw) => raw,
@@ -265,10 +267,10 @@ fn update_session_from_transcript(
     conn.execute(
         "
         UPDATE sessions
-        SET transcript = ?1, ended_at = ?2, byte_count = ?3
-        WHERE id = ?4
+        SET transcript = ?1, ended_at = ?2, byte_count = ?3, status = ?4
+        WHERE id = ?5
         ",
-        params![cleaned, ended_at, byte_count, id],
+        params![cleaned, ended_at, byte_count, status, id],
     )
     .map_err(|err| format!("failed to autosave session: {err}"))?;
     Ok(byte_count)
@@ -528,13 +530,19 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             notes TEXT NOT NULL DEFAULT '',
             started_at TEXT NOT NULL,
             ended_at TEXT NOT NULL,
-            byte_count INTEGER NOT NULL DEFAULT 0
+            byte_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'finished'
         );
 
         CREATE INDEX IF NOT EXISTS idx_sessions_started_at ON sessions(started_at);
         ",
     )
-    .map_err(|err| format!("failed to initialize schema: {err}"))
+    .map_err(|err| format!("failed to initialize schema: {err}"))?;
+    let _ = conn.execute(
+        "ALTER TABLE sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'finished'",
+        [],
+    );
+    Ok(())
 }
 
 fn memorywhale_dir() -> Result<PathBuf, String> {
