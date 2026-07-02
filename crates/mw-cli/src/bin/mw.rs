@@ -45,6 +45,7 @@ fn run() -> Result<(), String> {
         Some("demo") => return seed_demo(),
         Some("export") => return export_memory(&raw_args[1..]),
         Some("import") => return import_memory(&raw_args[1..]),
+        Some("push") => return push_memory(&raw_args[1..]),
         Some("context") => return context_cmd(&raw_args[1..]),
         Some("doctor") => return doctor(),
         Some("global") => return global_cmd(&raw_args[1..]),
@@ -178,6 +179,7 @@ fn print_help() {
          mw demo                  seed a small demo terminal-memory dataset\n\
          mw export [project:name] export memory to Markdown + JSON\n\
          mw import <bundle|sqlite> merge another machine's exported memory into this one\n\
+         mw push <ssh-host>       send this machine's memory to a teammate (scp + remote mw import)\n\
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
          mw doctor                check the install: data dir, database, `script`, and hook status\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
@@ -818,6 +820,56 @@ fn clean_transcript(input: &str) -> String {
     let cleaned = ctrl.replace_all(&s, "").into_owned();
     // Scrub secrets before the transcript is stored (env dumps, pasted tokens).
     mw_cli::redact(&cleaned)
+}
+
+/// Send this machine's memory to a teammate: make a clean DB snapshot, scp it
+/// over, and run `mw import` on the far side. Uses ssh/scp you already have —
+/// no server, nothing uploaded to a third party.
+fn push_memory(args: &[String]) -> Result<(), String> {
+    let host = args
+        .first()
+        .ok_or_else(|| "usage: mw push <ssh-host>  (e.g. mw push jetson)".to_string())?;
+
+    // Clean, standalone snapshot (folds in any WAL) via VACUUM INTO.
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let snapshot = std::env::temp_dir().join(format!("mw-push-{stamp}.sqlite3"));
+    let snapshot_str = snapshot
+        .to_str()
+        .ok_or_else(|| "temp path is not valid UTF-8".to_string())?;
+    {
+        let conn = open_session_db()?;
+        conn.execute("VACUUM INTO ?1", params![snapshot_str])
+            .map_err(|err| format!("failed to snapshot database: {err}"))?;
+    }
+
+    let remote_path = format!("/tmp/mw-push-{stamp}.sqlite3");
+    println!("mw: copying snapshot to {host}:{remote_path} …");
+    let scp = Command::new("scp")
+        .arg(snapshot_str)
+        .arg(format!("{host}:{remote_path}"))
+        .status()
+        .map_err(|err| format!("failed to run scp (is it installed?): {err}"))?;
+    let _ = fs::remove_file(&snapshot);
+    if !scp.success() {
+        return Err(format!("scp to {host} failed"));
+    }
+
+    println!("mw: running `mw import` on {host} …");
+    let ssh = Command::new("ssh")
+        .arg(host)
+        // Login shell so ~/.local/bin (where the installer puts mw) is on PATH.
+        .arg(format!(
+            "sh -lc 'mw import {remote_path}; rm -f {remote_path}'"
+        ))
+        .status()
+        .map_err(|err| format!("failed to run ssh: {err}"))?;
+    if !ssh.success() {
+        return Err(format!(
+            "remote import on {host} failed (is `mw` installed and on PATH there?)"
+        ));
+    }
+    println!("mw: pushed memory to {host}.");
+    Ok(())
 }
 
 /// Merge another machine's exported memory (a bundle dir or a raw .sqlite3)

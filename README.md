@@ -333,6 +333,26 @@ terminals. To auto-record every new terminal without typing `mw` each time, use
 
 See [SOP.md](SOP.md) for the full operating procedure.
 
+## Sharing memory across machines
+
+Memory is local per machine, but you can move it. Export a bundle and import it
+elsewhere:
+
+```bash
+mw export project:demo          # writes a bundle (Markdown + JSON + a SQLite copy)
+mw import path/to/bundle        # merge it into this machine (skips duplicates)
+```
+
+Or push straight to a teammate over SSH — this snapshots your DB, `scp`s it, and
+runs `mw import` on their side (they need `mw` installed):
+
+```bash
+mw push jetson                  # or any ssh host
+```
+
+Nothing goes through a third party; it's your own `scp`/`ssh`. For a live shared
+view, point everyone at one `mw-serve` (see the token note above).
+
 ## Why I Built It
 
 I was running the same robotics repo on two different machines: a Jetson and my
