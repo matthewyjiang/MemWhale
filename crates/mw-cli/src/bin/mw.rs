@@ -45,6 +45,7 @@ fn run() -> Result<(), String> {
         Some("demo") => return seed_demo(),
         Some("export") => return export_memory(&raw_args[1..]),
         Some("context") => return context_cmd(&raw_args[1..]),
+        Some("doctor") => return doctor(),
         Some("global") => return global_cmd(&raw_args[1..]),
         Some("--help") | Some("-h") => {
             print_help();
@@ -176,6 +177,7 @@ fn print_help() {
          mw demo                  seed a small demo terminal-memory dataset\n\
          mw export [project:name] export memory to Markdown + JSON\n\
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
+         mw doctor                check the install: data dir, database, `script`, and hook status\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
          \n\
          Records every command + output, stored locally and never uploaded.\n\
@@ -950,6 +952,82 @@ fn context_cmd(args: &[String]) -> Result<(), String> {
     if !any {
         println!("(none)");
     }
+    Ok(())
+}
+
+/// Self-check the install so a confused user (or agent) can see what's wrong.
+fn doctor() -> Result<(), String> {
+    let ok = |label: &str, detail: String| println!("  ok   {label}: {detail}");
+    let warn = |label: &str, detail: String| println!("  WARN {label}: {detail}");
+
+    println!("MemoryWhale doctor\n");
+
+    // Data dir writable?
+    match memorywhale_dir() {
+        Ok(dir) => {
+            let writable = fs::create_dir_all(&dir).is_ok()
+                && {
+                    let probe = dir.join(".doctor-write-test");
+                    let r = fs::write(&probe, b"ok").is_ok();
+                    let _ = fs::remove_file(&probe);
+                    r
+                };
+            if writable {
+                ok("data dir", dir.display().to_string());
+            } else {
+                warn("data dir", format!("{} (not writable)", dir.display()));
+            }
+        }
+        Err(err) => warn("data dir", err),
+    }
+
+    // Database opens + row counts.
+    match open_session_db() {
+        Ok(conn) => {
+            let count = |table: &str| -> i64 {
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                    .unwrap_or(-1)
+            };
+            ok(
+                "database",
+                format!(
+                    "{} sessions, {} command runs, {} bookmarks",
+                    count("sessions"),
+                    count("command_runs"),
+                    count("bookmarks")
+                ),
+            );
+        }
+        Err(err) => warn("database", err),
+    }
+
+    // `script` is required for `mw` session recording.
+    match Command::new("script").arg("--version").output() {
+        Ok(_) => ok("recording", "`script` is available".to_string()),
+        Err(_) => warn(
+            "recording",
+            "`script` not found — session recording needs util-linux/bsdutils `script`".to_string(),
+        ),
+    }
+
+    // Global hook status.
+    let enabled = global_enabled_path().map(|p| p.exists()).unwrap_or(false);
+    let wired = shell_rc_path()
+        .ok()
+        .and_then(|rc| fs::read_to_string(rc).ok())
+        .map(|c| c.contains(RC_MARKER))
+        .unwrap_or(false);
+    if enabled && wired {
+        ok("auto-record", "on and wired into your shell".to_string());
+    } else {
+        warn(
+            "auto-record",
+            format!(
+                "off (enabled: {enabled}, wired: {wired}) — run `mw global on` to enable"
+            ),
+        );
+    }
+
     Ok(())
 }
 
