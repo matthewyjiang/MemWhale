@@ -44,6 +44,7 @@ fn run() -> Result<(), String> {
         Some("replay") => return replay_command(&raw_args[1..]),
         Some("demo") => return seed_demo(),
         Some("export") => return export_memory(&raw_args[1..]),
+        Some("context") => return context_cmd(&raw_args[1..]),
         Some("global") => return global_cmd(&raw_args[1..]),
         Some("--help") | Some("-h") => {
             print_help();
@@ -174,6 +175,7 @@ fn print_help() {
          mw replay <run-id>       rerun a saved command from command_runs\n\
          mw demo                  seed a small demo terminal-memory dataset\n\
          mw export [project:name] export memory to Markdown + JSON\n\
+         mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
          \n\
          Records every command + output, stored locally and never uploaded.\n\
@@ -812,6 +814,143 @@ fn clean_transcript(input: &str) -> String {
     let cleaned = ctrl.replace_all(&s, "").into_owned();
     // Scrub secrets before the transcript is stored (env dumps, pasted tokens).
     mw_cli::redact(&cleaned)
+}
+
+/// Print a compact, token-budgeted digest of recent memory for an AI agent to
+/// read: recent failed commands (with short error tails) and recent sessions.
+fn context_cmd(args: &[String]) -> Result<(), String> {
+    let mut project: Option<String> = None;
+    let mut last_error = false;
+    let mut limit: i64 = 8;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--last-error" => last_error = true,
+            "--limit" => {
+                limit = iter
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| "--limit requires a number".to_string())?;
+            }
+            other if other.starts_with("project:") => project = Some(other.to_string()),
+            other => return Err(format!("unexpected argument {other:?}; run mw --help")),
+        }
+    }
+    let like = project.as_ref().map(|p| format!("%{p}%"));
+    let conn = open_session_db()?;
+
+    // One-line tail of the most useful error text, length-capped for token budget.
+    let tail = |text: &str, max: usize| -> String {
+        let t = text.trim();
+        let t = t
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or(t)
+            .trim();
+        let chars: Vec<char> = t.chars().collect();
+        if chars.len() > max {
+            format!("…{}", chars[chars.len() - max..].iter().collect::<String>())
+        } else {
+            t.to_string()
+        }
+    };
+
+    if let Some(p) = &project {
+        println!("# MemoryWhale context ({p})\n");
+    } else {
+        println!("# MemoryWhale context\n");
+    }
+
+    // Failed commands are the highest-signal thing for a debugging agent.
+    let mut stmt = conn
+        .prepare(
+            "SELECT argv_json, cwd, exit_code, stderr, notes, created_at
+             FROM command_runs
+             WHERE (exit_code IS NOT NULL AND exit_code != 0)
+               AND (?1 IS NULL OR notes LIKE ?1)
+             ORDER BY id DESC LIMIT ?2",
+        )
+        .map_err(|err| format!("failed to prepare context query: {err}"))?;
+    let rows = stmt
+        .query_map(params![like.as_deref(), if last_error { 1 } else { limit }], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|err| format!("failed to read command runs: {err}"))?;
+
+    let mut any = false;
+    println!("## Recent failed commands");
+    for row in rows {
+        let (argv_json, cwd, exit_code, stderr, notes, created_at) =
+            row.map_err(|err| format!("row error: {err}"))?;
+        let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_default();
+        any = true;
+        println!(
+            "- `{}` (exit {}, {})\n  cwd: {}\n  err: {}{}",
+            argv.join(" "),
+            exit_code.unwrap_or(-1),
+            created_at,
+            cwd.unwrap_or_default(),
+            tail(&stderr, 200),
+            if notes.trim().is_empty() {
+                String::new()
+            } else {
+                format!("\n  note: {}", tail(&notes, 160))
+            }
+        );
+    }
+    if !any {
+        println!("(none)");
+    }
+
+    if last_error {
+        return Ok(());
+    }
+
+    // A few recent sessions, for the "what was I doing" picture.
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, notes, started_at, byte_count
+             FROM sessions
+             WHERE ?1 IS NULL OR notes LIKE ?1
+             ORDER BY id DESC LIMIT ?2",
+        )
+        .map_err(|err| format!("failed to prepare session query: {err}"))?;
+    let rows = stmt
+        .query_map(params![like.as_deref(), limit], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(|err| format!("failed to read sessions: {err}"))?;
+    println!("\n## Recent sessions");
+    let mut any = false;
+    for row in rows {
+        let (id, notes, started_at, byte_count) = row.map_err(|err| format!("row error: {err}"))?;
+        any = true;
+        println!(
+            "- #{id} {started_at} ({byte_count} bytes){}  — replay with `mw show {id}`",
+            if notes.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", tail(&notes, 160))
+            }
+        );
+    }
+    if !any {
+        println!("(none)");
+    }
+    Ok(())
 }
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
