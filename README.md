@@ -294,6 +294,25 @@ which tools share a workflow. Click a command to see all of its runs.
   <img src="assets/knowledge-graph.svg" alt="MemoryWhale knowledge graph" width="560" />
 </p>
 
+## AI agents
+
+Give a coding agent the history of what already failed, so it stops re-deriving
+context every session. `mw-mcp` is a Model Context Protocol server — register it
+once and Claude Code / Codex / Cursor can query your memory directly:
+
+```bash
+claude mcp add memorywhale -- mw-mcp
+```
+
+Or, with no setup, paste a compact digest into any agent or chat:
+
+```bash
+mw context --last-error
+```
+
+See [integrations/](integrations/README.md) for the MCP server and a Claude Code
+skill that knows when to reach for the memory.
+
 ## Recording Across Terminals (Projects)
 
 Each `mw` records only its own terminal, so work spread across several terminals
