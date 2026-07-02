@@ -44,6 +44,7 @@ fn run() -> Result<(), String> {
         Some("replay") => return replay_command(&raw_args[1..]),
         Some("demo") => return seed_demo(),
         Some("export") => return export_memory(&raw_args[1..]),
+        Some("import") => return import_memory(&raw_args[1..]),
         Some("context") => return context_cmd(&raw_args[1..]),
         Some("doctor") => return doctor(),
         Some("global") => return global_cmd(&raw_args[1..]),
@@ -176,6 +177,7 @@ fn print_help() {
          mw replay <run-id>       rerun a saved command from command_runs\n\
          mw demo                  seed a small demo terminal-memory dataset\n\
          mw export [project:name] export memory to Markdown + JSON\n\
+         mw import <bundle|sqlite> merge another machine's exported memory into this one\n\
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
          mw doctor                check the install: data dir, database, `script`, and hook status\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
@@ -816,6 +818,136 @@ fn clean_transcript(input: &str) -> String {
     let cleaned = ctrl.replace_all(&s, "").into_owned();
     // Scrub secrets before the transcript is stored (env dumps, pasted tokens).
     mw_cli::redact(&cleaned)
+}
+
+/// Merge another machine's exported memory (a bundle dir or a raw .sqlite3)
+/// into the local database, skipping rows that are already present.
+fn import_memory(args: &[String]) -> Result<(), String> {
+    let raw = args
+        .first()
+        .ok_or_else(|| "usage: mw import <bundle-dir|memorywhale.sqlite3>".to_string())?;
+    let path = PathBuf::from(raw);
+    let src = if path.is_dir() {
+        path.join("memorywhale.sqlite3")
+    } else {
+        path
+    };
+    if !src.exists() {
+        return Err(format!("no SQLite database found at {}", src.display()));
+    }
+    let src_str = src
+        .to_str()
+        .ok_or_else(|| "import path is not valid UTF-8".to_string())?;
+
+    let conn = open_session_db()?;
+    conn.execute("ATTACH DATABASE ?1 AS src", params![src_str])
+        .map_err(|err| format!("failed to attach {src_str}: {err}"))?;
+
+    // A DB written by one CLI binary may only have the tables that binary uses.
+    let src_has = |table: &str| -> bool {
+        conn.query_row(
+            "SELECT 1 FROM src.sqlite_master WHERE type='table' AND name=?1",
+            params![table],
+            |_| Ok(()),
+        )
+        .is_ok()
+    };
+
+    let before_runs: i64 = conn
+        .query_row("SELECT COUNT(*) FROM command_runs", [], |r| r.get(0))
+        .unwrap_or(0);
+    let before_sessions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    // command_runs: skip rows already present (same command, argv, and timestamp).
+    if src_has("command_runs") {
+        conn.execute(
+            "INSERT INTO command_runs (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at)
+             SELECT s.command, s.argv_json, s.cwd, s.exit_code, s.stdout, s.stderr, s.notes, s.created_at
+             FROM src.command_runs s
+             WHERE NOT EXISTS (
+               SELECT 1 FROM command_runs m
+               WHERE m.command = s.command AND m.argv_json = s.argv_json AND m.created_at = s.created_at
+             )",
+            [],
+        )
+        .map_err(|err| format!("failed to merge command runs: {err}"))?;
+    }
+
+    // sessions: skip rows with the same start time and transcript path.
+    if src_has("sessions") {
+        conn.execute(
+            "INSERT INTO sessions (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count, status)
+             SELECT s.shell, s.cwd, s.transcript_path, s.transcript, s.notes, s.started_at, s.ended_at, s.byte_count, s.status
+             FROM src.sessions s
+             WHERE NOT EXISTS (
+               SELECT 1 FROM sessions m
+               WHERE m.started_at = s.started_at AND m.transcript_path = s.transcript_path
+             )",
+            [],
+        )
+        .map_err(|err| format!("failed to merge sessions: {err}"))?;
+    }
+
+    // bookmarks: skip same label + timestamp.
+    if src_has("bookmarks") {
+        let _ = conn.execute(
+            "INSERT INTO bookmarks (label, cwd, created_at)
+             SELECT s.label, s.cwd, s.created_at FROM src.bookmarks s
+             WHERE NOT EXISTS (
+               SELECT 1 FROM bookmarks m WHERE m.label = s.label AND m.created_at = s.created_at
+             )",
+            [],
+        );
+    }
+
+    conn.execute("DETACH DATABASE src", [])
+        .map_err(|err| format!("failed to detach source: {err}"))?;
+
+    // Rebuild the searchable argument rows for any newly imported command runs.
+    rebuild_missing_arguments(&conn)?;
+
+    let after_runs: i64 = conn
+        .query_row("SELECT COUNT(*) FROM command_runs", [], |r| r.get(0))
+        .unwrap_or(before_runs);
+    let after_sessions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+        .unwrap_or(before_sessions);
+    println!(
+        "mw: imported {} new command run(s) and {} new session(s) from {}",
+        after_runs - before_runs,
+        after_sessions - before_sessions,
+        src.display()
+    );
+    Ok(())
+}
+
+/// Split argv into the searchable command_arguments table for any command_run
+/// that has none yet (imported rows arrive without their argument rows).
+fn rebuild_missing_arguments(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, argv_json FROM command_runs
+             WHERE id NOT IN (SELECT DISTINCT command_run_id FROM command_arguments)",
+        )
+        .map_err(|err| format!("failed to find runs missing arguments: {err}"))?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|err| format!("query error: {err}"))?
+        .filter_map(Result::ok)
+        .collect();
+    for (id, argv_json) in rows {
+        let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_default();
+        for (position, value) in argv.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO command_arguments (command_run_id, position, value) VALUES (?1, ?2, ?3)",
+                params![id, position as i64, value],
+            )
+            .map_err(|err| format!("failed to insert argument: {err}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Print a compact, token-budgeted digest of recent memory for an AI agent to
