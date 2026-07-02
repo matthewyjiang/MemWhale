@@ -24,6 +24,8 @@ use std::sync::OnceLock;
 use std::time::SystemTime;
 
 static STARTUP_NOTICE: OnceLock<String> = OnceLock::new();
+// Optional shared token gating the dashboard. Empty = open (no auth).
+static AUTH_TOKEN: OnceLock<String> = OnceLock::new();
 
 fn main() {
     if let Err(err) = run() {
@@ -35,12 +37,13 @@ fn main() {
 fn run() -> Result<(), String> {
     let mut host = "0.0.0.0".to_string();
     let mut port: u16 = 7071;
+    let mut token = std::env::var("MEMORYWHALE_TOKEN").unwrap_or_default();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
                 println!(
-                    "mw-serve [--host <addr>] [--port <n>]  — serve memory as a web dashboard"
+                    "mw-serve [--host <addr>] [--port <n>] [--token <secret>]  — serve memory as a web dashboard"
                 );
                 return Ok(());
             }
@@ -51,8 +54,12 @@ fn run() -> Result<(), String> {
                     .and_then(|v| v.parse().ok())
                     .ok_or("--port needs a number")?;
             }
+            "--token" => token = args.next().unwrap_or_default(),
             other => return Err(format!("unknown option {other:?}; run mw-serve --help")),
         }
+    }
+    if !token.is_empty() {
+        let _ = AUTH_TOKEN.set(token);
     }
 
     let db = database_path()?;
@@ -101,6 +108,12 @@ fn run() -> Result<(), String> {
     if host == "0.0.0.0" {
         println!("  network: http://<this-machine-ip>:{port}/  (find it with: hostname -I)");
     }
+    if let Some(t) = AUTH_TOKEN.get() {
+        println!("  auth:    token required — open http://localhost:{port}/?token={t} once");
+    } else if host == "0.0.0.0" {
+        println!("  note:    no token set — anyone on this network can read your memory.");
+        println!("           set MEMORYWHALE_TOKEN or --token to require one.");
+    }
     println!("Press Ctrl-C to stop.");
 
     for stream in listener.incoming() {
@@ -124,11 +137,53 @@ fn handle(mut stream: TcpStream) {
     if reader.read_line(&mut request_line).is_err() {
         return;
     }
-    let raw_path = request_line.split_whitespace().nth(1).unwrap_or("/");
+    let raw_path = request_line.split_whitespace().nth(1).unwrap_or("/").to_string();
 
-    let (status, body) = route(raw_path);
+    // Read headers (only need Cookie for auth); stop at the blank line.
+    let mut cookie = String::new();
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).is_err() || line == "\r\n" || line == "\n" || line.is_empty()
+        {
+            break;
+        }
+        if let Some(rest) = line
+            .split_once(':')
+            .filter(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+        {
+            cookie = rest.1.trim().to_string();
+        }
+    }
+
+    // Optional shared-token gate. A valid ?token= sets a cookie so links keep working.
+    let mut set_cookie: Option<String> = None;
+    if let Some(want) = AUTH_TOKEN.get() {
+        let via_query = query_param(&raw_path, "token").as_deref() == Some(want.as_str());
+        let via_cookie = cookie
+            .split(';')
+            .filter_map(|c| c.trim().strip_prefix("mw_token="))
+            .any(|v| v == want);
+        if via_query {
+            set_cookie = Some(format!("mw_token={want}; Path=/; HttpOnly; SameSite=Strict"));
+        } else if !via_cookie {
+            let body =
+                page("Unauthorized", "<p>This dashboard requires a token. Append <code>?token=…</code> to the URL.</p>");
+            let response = format!(
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.as_bytes().len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.write_all(body.as_bytes());
+            return;
+        }
+    }
+
+    let (status, body) = route(&raw_path);
+    let cookie_header = set_cookie
+        .map(|c| format!("Set-Cookie: {c}\r\n"))
+        .unwrap_or_default();
     let response = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n{cookie_header}Connection: close\r\n\r\n",
         body.as_bytes().len()
     );
     let _ = stream.write_all(response.as_bytes());

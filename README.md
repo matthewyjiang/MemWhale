@@ -265,6 +265,15 @@ mw-serve                       # binds 0.0.0.0:7071
 #   over the LAN:   http://<machine-ip>:7071/   (find the IP with: hostname -I)
 ```
 
+Because it binds `0.0.0.0`, anyone on your network can read the dashboard. On a
+shared or untrusted network, require a token — the first `?token=` sets a cookie
+so links keep working:
+
+```bash
+MEMORYWHALE_TOKEN=some-shared-secret mw-serve   # or: mw-serve --token some-shared-secret
+#   open once:  http://<machine-ip>:7071/?token=some-shared-secret
+```
+
 The dashboard lists your command runs and recorded sessions, opens a readable
 detail page for each (with suggested next steps mined from your history), and
 includes a `/graph` view of commands linked to the arguments they used. It also
