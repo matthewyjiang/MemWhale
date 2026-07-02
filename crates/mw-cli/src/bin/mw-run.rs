@@ -179,9 +179,9 @@ fn remember_command(
             argv_json,
             cwd.to_string_lossy(),
             exit_code,
-            stdout,
-            stderr,
-            notes,
+            mw_cli::redact(stdout),
+            mw_cli::redact(stderr),
+            mw_cli::redact(notes),
             created_at
         ],
     )

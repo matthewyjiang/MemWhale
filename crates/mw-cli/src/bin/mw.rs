@@ -809,7 +809,9 @@ fn clean_transcript(input: &str) -> String {
     let s = osc.replace_all(input, "");
     let s = csi.replace_all(&s, "");
     let s = s.replace('\r', "");
-    ctrl.replace_all(&s, "").into_owned()
+    let cleaned = ctrl.replace_all(&s, "").into_owned();
+    // Scrub secrets before the transcript is stored (env dumps, pasted tokens).
+    mw_cli::redact(&cleaned)
 }
 
 fn init_schema(conn: &Connection) -> Result<(), String> {

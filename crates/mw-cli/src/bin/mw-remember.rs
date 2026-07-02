@@ -67,7 +67,16 @@ fn run() -> Result<(), String> {
         INSERT INTO command_runs (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         ",
-        params![command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at],
+        params![
+            command,
+            argv_json,
+            cwd,
+            exit_code,
+            mw_cli::redact(&stdout),
+            mw_cli::redact(&stderr),
+            mw_cli::redact(&notes),
+            created_at
+        ],
     )
     .map_err(|err| format!("failed to insert command run: {err}"))?;
     let run_id = conn.last_insert_rowid();
