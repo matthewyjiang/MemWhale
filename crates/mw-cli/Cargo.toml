@@ -40,6 +40,7 @@ assets = [
     ["target/release/mw-recover", "usr/bin/", "755"],
     ["target/release/mw-run", "usr/bin/", "755"],
     ["target/release/mw-screenshot", "usr/bin/", "755"],
+    ["target/release/mw-mcp", "usr/bin/", "755"],
     ["../../linux/man/mw.1", "usr/share/man/man1/", "644"],
     ["../../linux/man/mw-serve.1", "usr/share/man/man1/", "644"],
     ["../../linux/man/mw-remember.1", "usr/share/man/man1/", "644"],

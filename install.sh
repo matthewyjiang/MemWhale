@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/wuisabel-gif/MemWhale/main/install.sh | sh
 #
-# Installs mw, mw-serve, mw-run, mw-remember, mw-view, mw-recover, mw-screenshot
+# Installs mw, mw-serve, mw-run, mw-remember, mw-view, mw-recover, mw-screenshot, mw-mcp
 # into ~/.local/bin (override with PREFIX=/usr/local, needs write access).
 set -eu
 

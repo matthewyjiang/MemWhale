@@ -49,7 +49,7 @@ jobs:
           name="memorywhale-${ver}-${{ matrix.target }}"
           staging="$name"
           mkdir -p "$staging/bin"
-          for b in mw mw-remember mw-serve mw-view mw-recover mw-run mw-screenshot; do
+          for b in mw mw-remember mw-serve mw-view mw-recover mw-run mw-screenshot mw-mcp; do
             cp "target/${{ matrix.target }}/release/$b" "$staging/bin/"
           done
           cp README.md LICENSE "$staging/"

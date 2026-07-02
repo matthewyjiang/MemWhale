@@ -1,7 +1,24 @@
 //! Shared helpers for the MemoryWhale CLI binaries.
 
 use regex::Regex;
+use std::path::PathBuf;
 use std::sync::OnceLock;
+
+/// The MemoryWhale data directory (honours `MEMORYWHALE_DATA_DIR`).
+pub fn data_dir() -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("MEMORYWHALE_DATA_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    let base = dirs::data_local_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "could not resolve local data directory".to_string())?;
+    Ok(base.join("MemoryWhale"))
+}
+
+/// Path to the local SQLite database.
+pub fn database_path() -> Result<PathBuf, String> {
+    Ok(data_dir()?.join("memorywhale.sqlite3"))
+}
 
 const REDACTED: &str = "[REDACTED]";
 
