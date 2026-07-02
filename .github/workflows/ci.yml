@@ -22,15 +22,19 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build the crate (lib + binaries)
-        working-directory: src-tauri
-        run: cargo build
-
       - uses: actions/setup-node@v5
         with:
           node-version: 20
 
+      # The desktop crate embeds dist/ at compile time (generate_context!),
+      # so the frontend must be built before the Rust workspace.
       - name: Build the frontend
         run: |
           npm install
           npm run build
+
+      - name: Build the workspace (desktop app + CLI)
+        run: cargo build --workspace
+
+      - name: Test
+        run: cargo test -p mw-memory -p mw-cli

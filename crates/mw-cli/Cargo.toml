@@ -1,0 +1,52 @@
+[package]
+name = "mw-cli"
+version = "0.2.1"
+description = "MemoryWhale CLI — local-first terminal memory. Record commands, sessions, and output into local SQLite; browse them in a built-in web dashboard. Nothing is uploaded."
+authors = ["Isabel Wu <wuisabel@usc.edu>"]
+license = "MIT"
+edition = "2021"
+repository = "https://github.com/wuisabel-gif/MemWhale"
+readme = "../../README.md"
+
+# No Tauri, no GTK/WebKit: this is what lets `cargo install mw-cli` and the
+# aarch64 (Jetson) release builds work on a bare machine.
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# `cargo install cargo-deb && cargo deb -p mw-cli` builds the Debian/Jetson package.
+# ponytail: asset paths are manifest-relative; verified only in CI (no dpkg locally).
+[package.metadata.deb]
+name = "memorywhale"
+maintainer = "Isabel Wu <wuisabel@usc.edu>"
+copyright = "2026, MemoryWhale"
+license-file = ["../../LICENSE", "0"]
+extended-description = """
+Local-first terminal memory. Record commands, whole sessions, and output into a \
+local SQLite database and browse them in a built-in web dashboard. Nothing is \
+ever uploaded."""
+section = "utils"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/mw", "usr/bin/", "755"],
+    ["target/release/mw-remember", "usr/bin/", "755"],
+    ["target/release/mw-serve", "usr/bin/", "755"],
+    ["target/release/mw-view", "usr/bin/", "755"],
+    ["target/release/mw-recover", "usr/bin/", "755"],
+    ["target/release/mw-run", "usr/bin/", "755"],
+    ["target/release/mw-screenshot", "usr/bin/", "755"],
+    ["../../linux/man/mw.1", "usr/share/man/man1/", "644"],
+    ["../../linux/man/mw-serve.1", "usr/share/man/man1/", "644"],
+    ["../../linux/man/mw-remember.1", "usr/share/man/man1/", "644"],
+    ["../../linux/completions/mw.bash", "usr/share/bash-completion/completions/mw", "644"],
+    ["../../linux/completions/_mw", "usr/share/zsh/vendor-completions/_mw", "644"],
+    ["../../linux/shell/memorywhale.sh", "usr/share/memorywhale/", "644"],
+    ["../../linux/systemd/memorywhale-dashboard.service", "usr/share/memorywhale/", "644"],
+    ["../../linux/systemd/enable-dashboard.sh", "usr/share/memorywhale/", "755"],
+    ["../../linux/README.md", "usr/share/doc/memorywhale/LINUX.md", "644"],
+]

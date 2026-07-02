@@ -52,6 +52,10 @@ fn run() -> Result<(), String> {
         _ => {}
     }
 
+    if raw_args.is_empty() {
+        first_run_welcome()?;
+    }
+
     let mut notes = String::new();
     let mut live = false;
     let mut iter = raw_args.into_iter();
@@ -176,6 +180,59 @@ fn print_help() {
          Raw transcript: <data_local>/MemoryWhale/sessions/\n\
          Metadata + cleaned transcript: <data_local>/MemoryWhale/memorywhale.sqlite3 (sessions table)"
     );
+}
+
+/// Shown only on a genuine cold start: no hook wired and nothing recorded yet.
+/// Explains `mw` and offers to enable auto-recording; on "no" it falls through
+/// to recording this one session so bare `mw` still works as documented.
+fn first_run_welcome() -> Result<(), String> {
+    use std::io::{IsTerminal, Write};
+
+    // Existing user or scripted call → behave exactly as before (record).
+    if global_enabled_path().map(|p| p.exists()).unwrap_or(false) {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+    let recorded_before = open_session_db()
+        .and_then(|conn| {
+            conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get::<_, i64>(0))
+                .map_err(|err| err.to_string())
+        })
+        .map(|count| count > 0)
+        .unwrap_or(false);
+    if recorded_before {
+        return Ok(());
+    }
+
+    println!(
+        "🐬 Welcome to MemoryWhale.\n\
+         \n\
+         It records your terminal commands, output, and errors into a local\n\
+         SQLite database so debugging context survives crashes, SSH drops, and\n\
+         switching machines. Nothing is ever uploaded.\n\
+         \n\
+         The easiest way to use it is to auto-record every new terminal — no\n\
+         need to type `mw` each time. This adds one line to your shell startup\n\
+         file (`mw global off` undoes it).\n"
+    );
+    print!("Enable auto-recording in every new terminal now? [y/N] ");
+    let _ = std::io::stdout().flush();
+
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|err| format!("failed to read input: {err}"))?;
+
+    if matches!(answer.trim(), "y" | "Y" | "yes" | "Yes") {
+        global_on()?;
+        std::process::exit(0);
+    }
+
+    println!("\nNo problem — recording just this one session. Type `exit` to stop.");
+    println!("Run `mw --help` to see everything, or `mw global on` later.\n");
+    Ok(())
 }
 
 struct SessionDraft<'a> {

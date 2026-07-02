@@ -78,7 +78,40 @@ MemoryWhale turns terminal history into a durable technical memory. It is not
 just a prettier shell log. It is a place to preserve the reasoning trail of a
 project so a human or AI agent can continue from what already happened.
 
-## Run
+## Install
+
+The CLI (`mw`, `mw-serve`, …) ships as prebuilt binaries — no Rust toolchain
+needed. Pick one:
+
+**One-line install** (Linux x86_64/aarch64 incl. Jetson, macOS):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wuisabel-gif/MemWhale/main/install.sh | sh
+```
+
+Installs into `~/.local/bin` (override with `PREFIX=/usr/local`).
+
+**From crates via cargo** (builds the CLI only, no Tauri/GTK):
+
+```bash
+cargo install --git https://github.com/wuisabel-gif/MemWhale mw-cli
+```
+
+**Homebrew** (macOS/Linux):
+
+```bash
+brew tap wuisabel-gif/memorywhale https://github.com/wuisabel-gif/MemWhale
+brew install memorywhale
+```
+
+**Debian/Ubuntu/Jetson**: grab the `.deb` from the
+[releases page](https://github.com/wuisabel-gif/MemWhale/releases) and
+`sudo apt install ./memorywhale_*.deb`.
+
+First run: type `mw` and it explains itself and offers to auto-record every new
+terminal. That's the whole setup.
+
+## Run (from source)
 
 On Ubuntu or Jetson, install the Node/npm and Tauri system dependencies first.
 This fixes errors like `bash: npm: command not found`.
@@ -144,11 +177,14 @@ MemoryWhale now stores command runs as durable local memory:
 The desktop UI has a Terminal Memory panel for pasting a command and its
 output. The Rust backend also ships helper binaries for terminal-first use.
 
+The examples below use the installed commands. If you're running from a source
+checkout instead, prefix them with `cargo run -p mw-cli --bin <name> --` from
+the repo root (e.g. `cargo run -p mw-cli --bin mw -- --notes "…"`).
+
 Use `mw` when you want to record a whole interactive shell session:
 
 ```bash
-cd src-tauri
-cargo run --bin mw -- --notes "Jetson build debugging"
+mw --notes "Jetson build debugging"
 ```
 
 MemoryWhale starts a recorded subshell. Run commands normally inside it, then
@@ -163,24 +199,21 @@ terminal closes before you can type `exit`, the last autosaved transcript is
 still available.
 
 ```bash
-cd src-tauri
-cargo run --bin mw -- --live --notes "project:demo live autosave"
+mw --live --notes "project:demo live autosave"
 ```
 
 After recording, inspect sessions from the terminal:
 
 ```bash
-cd src-tauri
-cargo run --bin mw -- list
-cargo run --bin mw -- show 1
+mw list
+mw show 1
 ```
 
 Use `mw-run` when you want MemoryWhale to run one command and automatically
 capture its stdout, stderr, exit code, cwd, and arguments:
 
 ```bash
-cd src-tauri
-cargo run --bin mw-run -- --notes "Check the Rust backend" -- cargo check
+mw-run --notes "Check the Rust backend" -- cargo check
 ```
 
 The command output still appears in the terminal while MemoryWhale saves a copy
@@ -191,28 +224,26 @@ By default, MemoryWhale stores its SQLite database in the local app data
 directory. Set `MEMORYWHALE_DATA_DIR` when you want an explicit location:
 
 ```bash
-MEMORYWHALE_DATA_DIR=/tmp/memorywhale-data cargo run --bin mw-run -- -- echo "saved here"
+MEMORYWHALE_DATA_DIR=/tmp/memorywhale-data mw-run -- echo "saved here"
 ```
 
 Use `mw-remember` when you already have output text and want to save it
 manually:
 
 ```bash
-cd src-tauri
-cargo run --bin mw-remember -- \
-  --cwd ../.. \
+mw-remember \
+  --cwd . \
   --exit-code 127 \
   --stderr "zsh:1: command not found: cargo" \
   --notes "Rust verification failed because cargo was missing" \
-  -- cargo check --manifest-path MemoryWhale/src-tauri/Cargo.toml
+  -- cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 Use `mw-screenshot` only when you intentionally want to save the current screen
 as part of a debugging trail:
 
 ```bash
-cd src-tauri
-cargo run --bin mw-screenshot -- --notes "VS Code showed the TypeScript warning"
+mw-screenshot --notes "VS Code showed the TypeScript warning"
 ```
 
 Screenshots are local-only and opt-in. On headless machines, such as a Jetson

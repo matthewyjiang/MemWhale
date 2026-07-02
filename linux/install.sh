@@ -35,15 +35,13 @@ done
 
 BINS=(mw mw-remember mw-serve mw-view mw-recover mw-run mw-screenshot)
 
-echo "==> Building release binaries (this pulls the Tauri/GTK deps; see linux/README.md)…"
-build_args=()
-for b in "${BINS[@]}"; do build_args+=(--bin "$b"); done
-( cd "$REPO_ROOT/src-tauri" && cargo build --release "${build_args[@]}" )
+echo "==> Building release binaries (CLI only — no Tauri/GTK needed)…"
+( cd "$REPO_ROOT" && cargo build --release -p mw-cli )
 
 echo "==> Installing into $BIN_DIR"
 mkdir -p "$BIN_DIR"
 for b in "${BINS[@]}"; do
-  install -m 0755 "$REPO_ROOT/src-tauri/target/release/$b" "$BIN_DIR/$b"
+  install -m 0755 "$REPO_ROOT/target/release/$b" "$BIN_DIR/$b"
   echo "    $b"
 done
 
