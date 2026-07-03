@@ -1,7 +1,4 @@
-# MemoryWhale README demo. Regenerate with:  vhs assets/demo.tape  (from repo root)
-# Prereqs:  cargo build --release -p mw-cli   (binaries land in target/release)
-#           a throwaway crate at ~/auv/camera-driver whose src/main.rs has a
-#           type error, e.g.  let fps: i32 = "30";  so `cargo build` really fails.
+# MemoryWhale README demo — rendered with `vhs demo.tape` from the repo root
 Output assets/demo.gif
 
 Set Shell "bash"
@@ -21,9 +18,9 @@ Enter
 Type `export PS1='\[\e[38;5;39m\]$\[\e[0m\] '`
 Enter
 # seed one older failure so the recall shows real history
-Type `mw-remember --exit-code 1 --cwd ~/auv --stderr 'fatal: unable to access /dev/video0: Permission denied' --notes 'project:auv flash' -- v4l2-ctl --list-devices >/dev/null`
+Type `mw-remember --exit-code 1 --cwd /Users/Shared/auv --stderr 'fatal: unable to access /dev/video0: Permission denied' --notes 'project:auv flash' -- v4l2-ctl --list-devices >/dev/null`
 Enter
-Type `cd ~/auv/camera-driver && cargo clean`
+Type `cd /Users/Shared/auv/camera-driver && cargo clean`
 Enter
 Type "clear"
 Enter
