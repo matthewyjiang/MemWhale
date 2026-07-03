@@ -1016,32 +1016,43 @@ fn search_memory(args: &[String]) -> Result<(), String> {
 
     println!("# matches for {query:?}\n");
 
-    // Command runs.
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, argv_json, exit_code, notes, created_at
-             FROM command_runs
-             WHERE command LIKE ?1 OR argv_json LIKE ?1 OR stdout LIKE ?1
-                OR stderr LIKE ?1 OR notes LIKE ?1
-             ORDER BY id DESC LIMIT 30",
-        )
-        .map_err(|err| format!("failed to prepare command search: {err}"))?;
-    let rows = stmt
-        .query_map(params![like], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<i64>>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-            ))
-        })
-        .map_err(|err| format!("failed to search commands: {err}"))?;
+    // Command runs: prefer the FTS5 index (scales to large histories); fall back
+    // to a LIKE scan if the index or FTS5 itself is unavailable.
+    let _ = mw_cli::ensure_fts(&conn);
+    let fts = mw_cli::fts_match_query(&query);
+    let collect_cmds = |sql: &str, param: &str| -> Result<Vec<(i64, String, Option<i64>, String, String)>, String> {
+        let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![param], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    };
+    const CMD_FTS: &str = "SELECT id, argv_json, exit_code, notes, created_at
+         FROM command_runs
+         WHERE id IN (SELECT rowid FROM command_fts WHERE command_fts MATCH ?1)
+         ORDER BY id DESC LIMIT 30";
+    const CMD_LIKE: &str = "SELECT id, argv_json, exit_code, notes, created_at
+         FROM command_runs
+         WHERE command LIKE ?1 OR argv_json LIKE ?1 OR stdout LIKE ?1
+            OR stderr LIKE ?1 OR notes LIKE ?1
+         ORDER BY id DESC LIMIT 30";
+    let cmd_rows = if fts.is_empty() {
+        collect_cmds(CMD_LIKE, &like)?
+    } else {
+        collect_cmds(CMD_FTS, &fts).or_else(|_| collect_cmds(CMD_LIKE, &like))?
+    };
+
     println!("## Commands");
     let mut any = false;
-    for row in rows {
-        let (id, argv_json, exit_code, notes, created_at) =
-            row.map_err(|err| format!("row error: {err}"))?;
+    for (id, argv_json, exit_code, notes, created_at) in cmd_rows {
         let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_default();
         any = true;
         println!(

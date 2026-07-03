@@ -1,6 +1,7 @@
 //! Shared helpers for the MemoryWhale CLI binaries.
 
 use regex::Regex;
+use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -18,6 +19,63 @@ pub fn data_dir() -> Result<PathBuf, String> {
 /// Path to the local SQLite database.
 pub fn database_path() -> Result<PathBuf, String> {
     Ok(data_dir()?.join("memorywhale.sqlite3"))
+}
+
+/// Best-effort full-text index over `command_runs` (SQLite FTS5).
+///
+/// Creates an external-content FTS5 table kept in sync by triggers, and rebuilds
+/// it once when first created so pre-existing rows get indexed. The triggers
+/// persist in the database file, so once this has run any writer (mw-run,
+/// mw-remember, …) maintains the index without needing to call this. Returns an
+/// error if FTS5 isn't compiled in; callers treat that as "no index" and fall
+/// back to LIKE.
+pub fn ensure_fts(conn: &Connection) -> Result<(), String> {
+    let existed = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='command_fts'",
+            [],
+            |_| Ok(()),
+        )
+        .is_ok();
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS command_fts USING fts5(
+             command, argv_json, stdout, stderr, notes,
+             content='command_runs', content_rowid='id'
+         );
+         CREATE TRIGGER IF NOT EXISTS command_runs_fts_ai AFTER INSERT ON command_runs BEGIN
+             INSERT INTO command_fts(rowid, command, argv_json, stdout, stderr, notes)
+             VALUES (new.id, new.command, new.argv_json, new.stdout, new.stderr, new.notes);
+         END;
+         CREATE TRIGGER IF NOT EXISTS command_runs_fts_ad AFTER DELETE ON command_runs BEGIN
+             INSERT INTO command_fts(command_fts, rowid, command, argv_json, stdout, stderr, notes)
+             VALUES ('delete', old.id, old.command, old.argv_json, old.stdout, old.stderr, old.notes);
+         END;
+         CREATE TRIGGER IF NOT EXISTS command_runs_fts_au AFTER UPDATE ON command_runs BEGIN
+             INSERT INTO command_fts(command_fts, rowid, command, argv_json, stdout, stderr, notes)
+             VALUES ('delete', old.id, old.command, old.argv_json, old.stdout, old.stderr, old.notes);
+             INSERT INTO command_fts(rowid, command, argv_json, stdout, stderr, notes)
+             VALUES (new.id, new.command, new.argv_json, new.stdout, new.stderr, new.notes);
+         END;",
+    )
+    .map_err(|e| format!("fts init: {e}"))?;
+    if !existed {
+        conn.execute("INSERT INTO command_fts(command_fts) VALUES('rebuild')", [])
+            .map_err(|e| format!("fts rebuild: {e}"))?;
+    }
+    Ok(())
+}
+
+/// Turn a free-text query into a safe FTS5 MATCH expression: each whitespace
+/// term becomes a quoted phrase with a trailing prefix `*` (so "link" still
+/// finds "linker", closer to the old substring search), AND-ed together.
+/// Quoting escapes punctuation so it can't break MATCH syntax. Empty if the
+/// query has no usable terms.
+pub fn fts_match_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 const REDACTED: &str = "[REDACTED]";
@@ -96,5 +154,52 @@ mod tests {
         // Not testing the env branch here to avoid global state; ensure a
         // non-secret round-trips unchanged (covers the common path).
         assert_eq!(redact("plain line"), "plain line");
+    }
+
+    #[test]
+    fn fts_query_quotes_and_prefixes_terms() {
+        assert_eq!(fts_match_query("linker error"), "\"linker\"* \"error\"*");
+        assert_eq!(fts_match_query("  spaced  "), "\"spaced\"*");
+        assert_eq!(fts_match_query(""), "");
+        // a stray quote is escaped, not left to break MATCH syntax
+        assert_eq!(fts_match_query("a\"b"), "\"a\"\"b\"*");
+    }
+
+    #[test]
+    fn ensure_fts_indexes_and_matches() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE command_runs (id INTEGER PRIMARY KEY, command TEXT,
+                 argv_json TEXT, stdout TEXT, stderr TEXT, notes TEXT);
+             INSERT INTO command_runs (command, argv_json, stdout, stderr, notes)
+             VALUES ('cargo', '[\"cargo\",\"build\"]', '', 'error: linker failed', 'auv');",
+        )
+        .unwrap();
+        // pre-existing row must be indexed by the one-time rebuild
+        ensure_fts(&conn).unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM command_fts WHERE command_fts MATCH ?1",
+                [fts_match_query("linker")],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "pre-existing row should be found via FTS");
+
+        // a new row must be maintained by the trigger
+        conn.execute(
+            "INSERT INTO command_runs (command, argv_json, stdout, stderr, notes)
+             VALUES ('make', '[\"make\"]', '', 'undefined reference', '')",
+            [],
+        )
+        .unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM command_fts WHERE command_fts MATCH ?1",
+                [fts_match_query("undefined")],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "trigger should index the new row");
     }
 }
