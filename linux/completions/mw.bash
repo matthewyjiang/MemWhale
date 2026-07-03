@@ -3,12 +3,14 @@
 #       or: source it from ~/.bashrc
 
 _mw_complete() {
-  local cur prev
+  local cur
   cur="${COMP_WORDS[COMP_CWORD]}"
-  prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "list show global --notes --help" -- "$cur") )
+    COMPREPLY=( $(compgen -W "\
+list show mark replay demo \
+export import push context doctor global \
+--live --notes --help" -- "$cur") )
     return
   fi
 
@@ -23,6 +25,22 @@ _mw_complete() {
         ids="$(mw list 2>/dev/null | sed -n 's/^#\([0-9][0-9]*\).*/\1/p')"
         COMPREPLY=( $(compgen -W "$ids" -- "$cur") )
       fi
+      ;;
+    import)
+      # a bundle directory or an exported .sqlite3 file
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      ;;
+    push)
+      # ssh hosts from ~/.ssh/config
+      local hosts
+      hosts="$(sed -n 's/^[Hh]ost[[:space:]]\{1,\}\(.*\)/\1/p' ~/.ssh/config 2>/dev/null | tr ' ' '\n' | grep -v '[*?]')"
+      COMPREPLY=( $(compgen -W "$hosts" -- "$cur") )
+      ;;
+    context)
+      COMPREPLY=( $(compgen -W "--last-error --limit project:" -- "$cur") )
+      ;;
+    export)
+      COMPREPLY=( $(compgen -W "project:" -- "$cur") )
       ;;
   esac
 }

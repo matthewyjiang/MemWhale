@@ -11,11 +11,20 @@ _mw() {
   subcmds=(
     'list:list recorded sessions'
     'show:print the full transcript of a session'
+    'mark:bookmark the current debugging moment'
+    'replay:rerun a saved command run'
+    'demo:seed a small demo dataset'
+    'export:export memory to a bundle (Markdown + JSON + SQLite)'
+    'import:merge another machine'\''s exported memory'
+    'push:send this machine'\''s memory to a teammate over SSH'
+    'context:print a compact digest for an AI agent'
+    'doctor:check the install'
     'global:auto-record every new terminal (on/off/status)'
   )
 
   if (( CURRENT == 2 )); then
     _arguments \
+      '--live[autosave the session to SQLite while running]' \
       '--notes[attach a note to this session]:note:' \
       '(-h --help)'{-h,--help}'[show help]' \
       '*::command:->cmds'
@@ -31,6 +40,17 @@ _mw() {
       local -a ids
       ids=(${(f)"$(mw list 2>/dev/null | sed -n 's/^#\([0-9][0-9]*\).*/\1/p')"})
       _describe -t ids 'session id' ids
+      ;;
+    import)
+      _files
+      ;;
+    push)
+      _ssh_hosts 2>/dev/null || _hosts
+      ;;
+    context)
+      _arguments \
+        '--last-error[only the most recent failure]' \
+        '--limit[max results]:count:'
       ;;
   esac
 }

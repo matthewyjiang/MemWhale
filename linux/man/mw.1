@@ -1,8 +1,9 @@
-.TH MW 1 "2026-06-22" "MemoryWhale" "User Commands"
+.TH MW 1 "2026-07-02" "MemoryWhale" "User Commands"
 .SH NAME
 mw \- record whole terminal sessions into local MemoryWhale storage
 .SH SYNOPSIS
 .B mw
+.RB [ --live ]
 .RI [ --notes
 .IR text ]
 .br
@@ -10,6 +11,29 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .br
 .B mw show
 .I id
+.br
+.B mw mark
+.I text
+.br
+.B mw replay
+.I run-id
+.br
+.B mw export
+.RI [ project:name ]
+.br
+.B mw import
+.I bundle|sqlite
+.br
+.B mw push
+.I ssh-host
+.br
+.B mw context
+.RI [ project:name ]
+.RB [ --last-error ]
+.RB [ --limit
+.IR n ]
+.br
+.B mw doctor
 .br
 .B mw global
 .RB { on | off | status }
@@ -42,6 +66,39 @@ List recorded sessions (id, start time, size, note).
 Print the full faithful transcript of session
 .IR id .
 .TP
+.BI "mw mark " text
+Bookmark the current debugging moment with a note.
+.TP
+.BI "mw replay " run-id
+Rerun a saved command run from the database.
+.TP
+.BI "mw export " [project:name]
+Export memory to a bundle (Markdown, JSON, and a SQLite copy), optionally
+scoped to a project tag.
+.TP
+.BI "mw import " bundle|sqlite
+Merge another machine's exported memory into this one, skipping duplicates.
+.TP
+.BI "mw push " ssh-host
+Snapshot this machine's memory, copy it to
+.I ssh-host
+with
+.BR scp (1),
+and run
+.B mw import
+there. Requires
+.B mw
+installed on the remote.
+.TP
+.BI "mw context " [project:name] " [--last-error] [--limit " n ]
+Print a compact, token-budgeted digest of recent failed commands and sessions,
+suitable for pasting into an AI agent.
+.TP
+.B mw doctor
+Check the install: data directory, database, the
+.BR script (1)
+dependency, and auto-record hook status.
+.TP
 .B mw global on
 Wire a shell-startup hook so every new interactive terminal auto-records.
 .TP
@@ -59,6 +116,11 @@ Override the data directory (default
 .B MW_RECORDING
 Set to 1 inside a recorded shell; the global hook checks it to avoid nested
 recordings.
+.TP
+.B MEMORYWHALE_NO_REDACT
+Set to disable secret redaction of captured output (stored raw). By default,
+common secret shapes (API keys, tokens, passwords, PEM blocks) are scrubbed
+before storage.
 .SH FILES
 .TP
 .I ~/.local/share/MemoryWhale/memorywhale.sqlite3
@@ -67,6 +129,10 @@ Session and command database.
 .I ~/.local/share/MemoryWhale/sessions/
 Raw session transcripts.
 .SH SEE ALSO
-.BR mw-serve (1),
+.BR mw-run (1),
 .BR mw-remember (1),
+.BR mw-serve (1),
+.BR mw-mcp (1),
+.BR mw-view (1),
+.BR mw-recover (1),
 .BR script (1)
