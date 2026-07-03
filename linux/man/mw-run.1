@@ -1,0 +1,41 @@
+.TH MW-RUN 1 "2026-07-03" "MemoryWhale" "User Commands"
+.SH NAME
+mw-run \- run a command and capture its output into MemoryWhale
+.SH SYNOPSIS
+.B mw-run
+.RI [ --cwd
+.IR path ]
+.RI [ --notes
+.IR text ]
+.B --
+.I command
+.RI [ args... ]
+.SH DESCRIPTION
+.B mw-run
+runs
+.I command
+to completion, streaming its output to your terminal as usual, while saving a
+copy \(em command, arguments, working directory, exit code, stdout, and stderr
+\(em into the local MemoryWhale SQLite database. Captured output is scrubbed for
+common secrets before storage (see
+.BR mw (1)).
+.B mw-run
+exits with the same status as the command it ran. Nothing is uploaded.
+.SH OPTIONS
+.TP
+.BI "--cwd " path
+Directory to run the command in (default: the current directory).
+.TP
+.BI "--notes " text
+Free-form note attached to the run.
+.TP
+.B --
+Everything after this is the command and its arguments.
+.SH EXAMPLES
+.nf
+mw-run --notes "check the backend" -- cargo check
+.fi
+.SH SEE ALSO
+.BR mw (1),
+.BR mw-remember (1),
+.BR mw-serve (1)

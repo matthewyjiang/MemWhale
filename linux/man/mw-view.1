@@ -1,0 +1,38 @@
+.TH MW-VIEW 1 "2026-07-03" "MemoryWhale" "User Commands"
+.SH NAME
+mw-view \- render a single MemoryWhale memory as a local web page
+.SH SYNOPSIS
+.B mw-view
+.br
+.B mw-view
+.I id
+.RB [ --no-open ]
+.br
+.B mw-view session
+.I id
+.br
+.B mw-view command
+.I id
+.SH DESCRIPTION
+.B mw-view
+reads the local SQLite store and writes a self-contained HTML page for one
+recorded session or command run, then opens it in your browser. With no
+arguments it lists the memories you can open. Local only; nothing is uploaded.
+.SH OPTIONS
+.TP
+.B --no-open
+Write the HTML file but do not launch a browser.
+.SH COMMANDS
+.TP
+.BI "mw-view " id
+Render the session or command run with that id and open it.
+.TP
+.BI "mw-view session " id
+Render a recorded session.
+.TP
+.BI "mw-view command " id
+Render a command run.
+.SH SEE ALSO
+.BR mw (1),
+.BR mw-serve (1),
+.BR mw-recover (1)

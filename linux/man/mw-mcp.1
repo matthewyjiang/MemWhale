@@ -1,0 +1,36 @@
+.TH MW-MCP 1 "2026-07-03" "MemoryWhale" "User Commands"
+.SH NAME
+mw-mcp \- Model Context Protocol server over MemoryWhale memory
+.SH SYNOPSIS
+.B mw-mcp
+.SH DESCRIPTION
+.B mw-mcp
+is a Model Context Protocol (MCP) server that lets an AI agent query your
+MemoryWhale memory directly, instead of pasting it in. It speaks
+newline-delimited JSON-RPC 2.0 on standard input and output and takes no
+arguments. It reads the same local database as the rest of the CLI and honours
+.BR MEMORYWHALE_DATA_DIR .
+.PP
+Register it once with an MCP client, e.g. Claude Code:
+.PP
+.RS
+.B claude mcp add memorywhale -- mw-mcp
+.RE
+.SH TOOLS
+.TP
+.B recent_errors
+Recent failed commands (non-zero exit) with their error output.
+.TP
+.B search_memory
+Search remembered commands, arguments, output, and notes for a term.
+.TP
+.B get_context
+A compact digest of recent failures, optionally scoped to a project tag.
+.SH ENVIRONMENT
+.TP
+.B MEMORYWHALE_DATA_DIR
+Override the data directory (default
+.IR <data_local>/MemoryWhale ).
+.SH SEE ALSO
+.BR mw (1),
+.BR mw-serve (1)

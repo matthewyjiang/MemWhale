@@ -1,0 +1,21 @@
+.TH MW-RECOVER 1 "2026-07-03" "MemoryWhale" "User Commands"
+.SH NAME
+mw-recover \- recover interrupted MemoryWhale session recordings
+.SH SYNOPSIS
+.B mw-recover
+.SH DESCRIPTION
+.B mw-recover
+scans the MemoryWhale sessions directory for recordings whose
+.BR mw (1)
+process was interrupted \(em by an SSH drop, a crash, or a sudden shutdown \(em
+before it could write its database row, and imports those transcripts into the
+local SQLite store. Already-saved sessions are left untouched. It takes no
+arguments and reports what, if anything, it recovered.
+.PP
+The dashboard
+.RB ( mw-serve (1))
+runs the same recovery automatically on startup.
+.SH SEE ALSO
+.BR mw (1),
+.BR mw-serve (1),
+.BR mw-view (1)

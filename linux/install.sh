@@ -66,7 +66,7 @@ if [ "$DO_MAN" = 1 ]; then
   man_dir="$PREFIX/share/man/man1"
   mkdir -p "$man_dir"
   install -m 0644 "$LINUX_DIR"/man/*.1 "$man_dir/"
-  echo "    $man_dir/{mw,mw-serve,mw-remember}.1"
+  echo "    $man_dir/mw*.1"
 fi
 
 if [ "$DO_HOOK" = 1 ]; then
