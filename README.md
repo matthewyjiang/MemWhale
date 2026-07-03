@@ -29,6 +29,10 @@ into local SQLite, so what already failed stays searchable** — across crashes,
 SSH drops, and machine switches. Everything stays on your machine; nothing is
 uploaded.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="Capturing a failed build with mw-run, then recalling its exact error later with mw context" width="820" />
+</p>
+
 ## Install
 
 Prebuilt binaries for Linux x86_64/aarch64 (incl. Jetson) and macOS — no Rust
