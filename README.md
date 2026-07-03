@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://github.com/wuisabel-gif/MemWhale/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/wuisabel-gif/MemWhale/ci.yml?branch=main&label=CI&logo=github" alt="CI"/></a>
   <a href="https://github.com/wuisabel-gif/MemWhale/releases"><img src="https://img.shields.io/github/v/release/wuisabel-gif/MemWhale?color=2b43dd&label=release" alt="release"/></a>
+  <a href="https://crates.io/crates/memorywhale-cli"><img src="https://img.shields.io/crates/v/memorywhale-cli?color=2b43dd&label=crates.io" alt="crates.io"/></a>
   <img src="https://img.shields.io/badge/license-MIT-2b43dd" alt="license MIT"/>
   <img src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white" alt="Rust"/>
   <img src="https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white" alt="SQLite"/>
@@ -46,7 +47,7 @@ Installs into `~/.local/bin` (override with `PREFIX=/usr/local`). Other routes:
 
 ```bash
 # cargo (builds the CLI only — no Tauri/GTK)
-cargo install --git https://github.com/wuisabel-gif/MemWhale memorywhale-cli
+cargo install memorywhale-cli
 
 # Homebrew (macOS/Linux)
 brew tap wuisabel-gif/memorywhale https://github.com/wuisabel-gif/MemWhale
