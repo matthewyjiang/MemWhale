@@ -57,8 +57,13 @@ if [ "$DO_COMPLETIONS" = 1 ]; then
   mkdir -p "$bash_dir" "$zsh_dir"
   install -m 0644 "$LINUX_DIR/completions/mw.bash" "$bash_dir/mw"
   install -m 0644 "$LINUX_DIR/completions/_mw" "$zsh_dir/_mw"
-  echo "    bash -> $bash_dir/mw"
-  echo "    zsh  -> $zsh_dir/_mw  (ensure that dir is on \$fpath)"
+  # helper binaries: bash loads completions by command name, so copy under each
+  for c in mw-run mw-remember mw-serve mw-view; do
+    install -m 0644 "$LINUX_DIR/completions/mw-extra.bash" "$bash_dir/$c"
+  done
+  install -m 0644 "$LINUX_DIR/completions/_mw-extra" "$zsh_dir/_mw-extra"
+  echo "    bash -> $bash_dir/{mw,mw-run,mw-remember,mw-serve,mw-view}"
+  echo "    zsh  -> $zsh_dir/{_mw,_mw-extra}  (ensure that dir is on \$fpath)"
 fi
 
 if [ "$DO_MAN" = 1 ]; then

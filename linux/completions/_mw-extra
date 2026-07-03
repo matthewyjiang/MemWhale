@@ -1,0 +1,37 @@
+#compdef mw-run mw-remember mw-serve mw-view
+# zsh completion for the MemoryWhale helper binaries.
+# Install: copy this file (named _mw-extra) into a directory on your $fpath.
+
+_mw_extra() {
+  case $service in
+    mw-serve)
+      _arguments \
+        '--host[bind address]:addr:' \
+        '--port[port]:port:' \
+        '--token[require a shared token]:token:' \
+        '(-h --help)'{-h,--help}'[show help]'
+      ;;
+    mw-run)
+      _arguments \
+        '--cwd[run in this directory]:dir:_files -/' \
+        '--notes[attach a note]:note:' \
+        '(-h --help)'{-h,--help}'[show help]' \
+        '*::command:_command_names -e'
+      ;;
+    mw-remember)
+      _arguments \
+        '--cwd[working directory]:dir:_files -/' \
+        '--exit-code[exit status]:code:' \
+        '--stdout[captured stdout]:text:' \
+        '--stderr[captured stderr]:text:' \
+        '--notes[attach a note]:note:'
+      ;;
+    mw-view)
+      _arguments \
+        '1:kind:(session command)' \
+        '--no-open[write HTML without opening a browser]'
+      ;;
+  esac
+}
+
+_mw_extra "$@"
