@@ -12,6 +12,9 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .B mw show
 .I id
 .br
+.B mw search
+.I text
+.br
 .B mw mark
 .I text
 .br
@@ -65,6 +68,10 @@ List recorded sessions (id, start time, size, note).
 .BI "mw show " id
 Print the full faithful transcript of session
 .IR id .
+.TP
+.BI "mw search " text
+Search command runs (command, arguments, output, notes) and session
+transcripts for a substring; prints matches with follow-up hints.
 .TP
 .BI "mw mark " text
 Bookmark the current debugging moment with a note.

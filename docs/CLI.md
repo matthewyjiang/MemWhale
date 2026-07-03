@@ -12,6 +12,7 @@ mw --notes "Jetson build debugging"   # record a whole shell session until exit
 mw --live --notes "project:demo"      # autosave to SQLite every few seconds
 mw list                               # list recorded sessions
 mw show 1                             # print the full transcript of a session
+mw search "linker error"              # search commands, output, notes, transcripts
 mw mark "before the risky flash"      # bookmark the current debugging moment
 mw replay 12                          # rerun a saved command run
 mw context [project:name] [--last-error] [--limit N]   # digest for AI agents

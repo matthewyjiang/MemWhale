@@ -47,6 +47,7 @@ fn run() -> Result<(), String> {
         Some("import") => return import_memory(&raw_args[1..]),
         Some("push") => return push_memory(&raw_args[1..]),
         Some("context") => return context_cmd(&raw_args[1..]),
+        Some("search") => return search_memory(&raw_args[1..]),
         Some("doctor") => return doctor(),
         Some("global") => return global_cmd(&raw_args[1..]),
         Some("--help") | Some("-h") => {
@@ -180,6 +181,7 @@ fn print_help() {
          mw export [project:name] export memory to Markdown + JSON\n\
          mw import <bundle|sqlite> merge another machine's exported memory into this one\n\
          mw push <ssh-host>       send this machine's memory to a teammate (scp + remote mw import)\n\
+         mw search <text>         search commands, output, notes, and session transcripts\n\
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
          mw doctor                check the install: data dir, database, `script`, and hook status\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
@@ -998,6 +1000,100 @@ fn rebuild_missing_arguments(conn: &Connection) -> Result<(), String> {
             )
             .map_err(|err| format!("failed to insert argument: {err}"))?;
         }
+    }
+    Ok(())
+}
+
+/// Search command runs (command, args, output, notes) and session transcripts
+/// for a substring. The everyday "where did I see that error?" command.
+fn search_memory(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("usage: mw search <text>".to_string());
+    }
+    let query = args.join(" ");
+    let like = format!("%{query}%");
+    let conn = open_session_db()?;
+
+    println!("# matches for {query:?}\n");
+
+    // Command runs.
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, argv_json, exit_code, notes, created_at
+             FROM command_runs
+             WHERE command LIKE ?1 OR argv_json LIKE ?1 OR stdout LIKE ?1
+                OR stderr LIKE ?1 OR notes LIKE ?1
+             ORDER BY id DESC LIMIT 30",
+        )
+        .map_err(|err| format!("failed to prepare command search: {err}"))?;
+    let rows = stmt
+        .query_map(params![like], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<i64>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|err| format!("failed to search commands: {err}"))?;
+    println!("## Commands");
+    let mut any = false;
+    for row in rows {
+        let (id, argv_json, exit_code, notes, created_at) =
+            row.map_err(|err| format!("row error: {err}"))?;
+        let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_default();
+        any = true;
+        println!(
+            "- #{id} `{}` (exit {}, {}){}  — `mw replay {id}`",
+            argv.join(" "),
+            exit_code.unwrap_or(0),
+            created_at,
+            if notes.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", notes.trim())
+            }
+        );
+    }
+    if !any {
+        println!("(none)");
+    }
+
+    // Session transcripts.
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, notes, started_at
+             FROM sessions
+             WHERE transcript LIKE ?1 OR notes LIKE ?1
+             ORDER BY id DESC LIMIT 30",
+        )
+        .map_err(|err| format!("failed to prepare session search: {err}"))?;
+    let rows = stmt
+        .query_map(params![like], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|err| format!("failed to search sessions: {err}"))?;
+    println!("\n## Sessions");
+    let mut any = false;
+    for row in rows {
+        let (id, notes, started_at) = row.map_err(|err| format!("row error: {err}"))?;
+        any = true;
+        println!(
+            "- #{id} {started_at}{}  — `mw show {id}`",
+            if notes.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", notes.trim())
+            }
+        );
+    }
+    if !any {
+        println!("(none)");
     }
     Ok(())
 }

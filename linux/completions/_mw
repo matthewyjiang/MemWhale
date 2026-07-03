@@ -14,6 +14,7 @@ _mw() {
     'mark:bookmark the current debugging moment'
     'replay:rerun a saved command run'
     'demo:seed a small demo dataset'
+    'search:search commands, output, notes, and transcripts'
     'export:export memory to a bundle (Markdown + JSON + SQLite)'
     'import:merge another machine'\''s exported memory'
     'push:send this machine'\''s memory to a teammate over SSH'

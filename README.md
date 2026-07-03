@@ -67,6 +67,7 @@ mw --notes "Jetson build debugging"   # record a whole shell session (exit to st
 mw --live                             # same, but autosaved — survives SSH drops
 mw-run -- cargo check                 # run one command, capture its output + exit code
 mw list && mw show 1                  # inspect recorded sessions
+mw search "linker error"              # find it across commands, output, and transcripts
 mw context --last-error               # the most recent failure, with its exact error
 mw-serve                              # web dashboard (works headless, e.g. on a Jetson)
 ```
