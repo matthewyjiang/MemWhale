@@ -287,7 +287,9 @@ fn dashboard(query: &str) -> String {
     body.push_str("<h2>Command runs</h2>\n");
     let mut rows = 0;
     let mut cur_date = String::new();
-    let mut list_open = false;
+    let mut group = String::new();
+    let mut gcount = 0usize;
+    let mut first_group = true;
     if let Ok(mut stmt) = conn.prepare(
         "SELECT id, command, argv_json, exit_code, created_at, notes FROM command_runs ORDER BY created_at DESC, id DESC LIMIT 200",
     ) {
@@ -305,19 +307,17 @@ fn dashboard(query: &str) -> String {
                 let (id, cmd, argv_json, code, at, notes) = row;
                 let day = date_of(&at);
                 if day != cur_date {
-                    if list_open {
-                        body.push_str("</div>\n");
+                    if !cur_date.is_empty() {
+                        push_day_group(&mut body, &cur_date, &group, gcount, first_group);
+                        first_group = false;
+                        group.clear();
+                        gcount = 0;
                     }
-                    body.push_str(&format!(
-                        "<div class=\"datehead\">{}</div>\n<div class=\"list\">\n",
-                        esc(day)
-                    ));
                     cur_date = day.to_string();
-                    list_open = true;
                 }
                 let full = full_command(&argv_json, &cmd);
                 let ok = code == Some(0);
-                body.push_str(&format!(
+                group.push_str(&format!(
                     "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>\n",
                     if ok { "ok" } else { "bad" },
@@ -326,12 +326,13 @@ fn dashboard(query: &str) -> String {
                     esc(time_of(&at)),
                     esc_redacted(&notes)
                 ));
+                gcount += 1;
                 rows += 1;
             }
         }
     }
-    if list_open {
-        body.push_str("</div>\n");
+    if !cur_date.is_empty() {
+        push_day_group(&mut body, &cur_date, &group, gcount, first_group);
     }
     if rows == 0 {
         body.push_str("<div class=\"list\"><p class=\"empty\">No command runs yet. Record one with <code>mw-remember</code>.</p></div>\n");
@@ -340,7 +341,9 @@ fn dashboard(query: &str) -> String {
     body.push_str("<h2>Sessions</h2>\n");
     let mut srows = 0;
     let mut cur_date = String::new();
-    let mut list_open = false;
+    let mut group = String::new();
+    let mut gcount = 0usize;
+    let mut first_group = true;
     if let Ok(mut stmt) = conn.prepare(
         "SELECT id, started_at, ended_at, byte_count, notes, status FROM sessions ORDER BY started_at DESC, id DESC LIMIT 200",
     ) {
@@ -358,23 +361,22 @@ fn dashboard(query: &str) -> String {
                 let (id, at, ended_at, bytes, notes, status) = row;
                 let day = date_of(&at);
                 if day != cur_date {
-                    if list_open {
-                        body.push_str("</div>\n");
+                    if !cur_date.is_empty() {
+                        push_day_group(&mut body, &cur_date, &group, gcount, first_group);
+                        first_group = false;
+                        group.clear();
+                        gcount = 0;
                     }
-                    body.push_str(&format!(
-                        "<div class=\"datehead\">{}</div>\n<div class=\"list\">\n",
-                        esc(day)
-                    ));
                     cur_date = day.to_string();
-                    list_open = true;
                 }
-                body.push_str(&session_row(id, &at, &ended_at, bytes, &notes, &status));
+                group.push_str(&session_row(id, &at, &ended_at, bytes, &notes, &status));
+                gcount += 1;
                 srows += 1;
             }
         }
     }
-    if list_open {
-        body.push_str("</div>\n");
+    if !cur_date.is_empty() {
+        push_day_group(&mut body, &cur_date, &group, gcount, first_group);
     }
     if srows == 0 {
         body.push_str("<div class=\"list\"><p class=\"empty\">No sessions yet. Record one with <code>mw</code>.</p></div>\n");
@@ -563,6 +565,19 @@ fn time_of(ts: &str) -> &str {
     } else {
         ts
     }
+}
+
+/// Emit one collapsible day group: a `<details>` whose summary is the date and
+/// count, wrapping the already-rendered rows. `open` expands it by default.
+fn push_day_group(body: &mut String, date: &str, rows_html: &str, count: usize, open: bool) {
+    body.push_str(&format!(
+        "<details class=\"daygroup\"{}><summary class=\"datehead\">{} \
+         <span class=\"gcount\">{}</span></summary>\n<div class=\"list\">\n{}</div>\n</details>\n",
+        if open { " open" } else { "" },
+        esc(date),
+        count,
+        rows_html
+    ));
 }
 
 fn session_row(
@@ -1197,7 +1212,11 @@ h2{font-size:.95rem;margin:1.8em 0 .6em;text-transform:uppercase;letter-spacing:
 .search input{flex:1;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px;font:600 .9rem ui-monospace,monospace;color:var(--ink)}
 .search button{border:0;border-radius:10px;background:var(--azure);color:#fff;padding:10px 14px;font:700 .85rem ui-monospace,monospace;cursor:pointer}
 .list{display:flex;flex-direction:column;gap:8px}
-.datehead{margin:1.4em 0 .5em;font:600 .8rem ui-monospace,monospace;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:.3em}
+.daygroup{margin:1.1em 0}
+.datehead{margin:0 0 .5em;font:600 .8rem ui-monospace,monospace;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:.3em;cursor:pointer;user-select:none}
+.datehead:hover{color:var(--azure)}
+.datehead .gcount{color:var(--muted);font-weight:400;opacity:.7}
+.datehead .gcount::before{content:"· "}
 .row{display:grid;grid-template-columns:90px 1fr 1.2fr 1.4fr;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px;transition:border-color .15s}
 .row:hover{border-color:var(--azure)}
 .row .cmd{font:600 .95rem ui-monospace,monospace}
