@@ -36,7 +36,7 @@ done
 BINS=(mw mw-remember mw-serve mw-view mw-recover mw-run mw-screenshot mw-mcp)
 
 echo "==> Building release binaries (CLI only — no Tauri/GTK needed)…"
-( cd "$REPO_ROOT" && cargo build --release -p mw-cli )
+( cd "$REPO_ROOT" && cargo build --release -p memorywhale-cli )
 
 echo "==> Installing into $BIN_DIR"
 mkdir -p "$BIN_DIR"

@@ -46,7 +46,7 @@ Installs into `~/.local/bin` (override with `PREFIX=/usr/local`). Other routes:
 
 ```bash
 # cargo (builds the CLI only — no Tauri/GTK)
-cargo install --git https://github.com/wuisabel-gif/MemWhale mw-cli
+cargo install --git https://github.com/wuisabel-gif/MemWhale memorywhale-cli
 
 # Homebrew (macOS/Linux)
 brew tap wuisabel-gif/memorywhale https://github.com/wuisabel-gif/MemWhale
@@ -176,7 +176,7 @@ The repo is a Cargo workspace: `crates/mw-cli` (the CLI, no GUI dependencies),
 `crates/mw-memory` (retrieval), and `src-tauri` (the desktop app).
 
 ```bash
-cargo build -p mw-cli            # CLI only — fast, no GTK/WebKit needed
+cargo build -p memorywhale-cli            # CLI only — fast, no GTK/WebKit needed
 npm install && npm run tauri:dev # full desktop app (needs Tauri system deps)
 ```
 

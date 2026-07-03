@@ -2046,6 +2046,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "memorywhale-cli"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "dirs 5.0.1",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2091,18 +2103,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "mw-cli"
-version = "0.3.0"
-dependencies = [
- "chrono",
- "dirs 5.0.1",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
 ]
 
 [[package]]

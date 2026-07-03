@@ -1,15 +1,17 @@
 [package]
-name = "mw-cli"
+name = "memorywhale-cli"
 version = "0.3.0"
 description = "MemoryWhale CLI — local-first terminal memory. Record commands, sessions, and output into local SQLite; browse them in a built-in web dashboard. Nothing is uploaded."
 authors = ["Isabel Wu <wuisabel@usc.edu>"]
 license = "MIT"
 edition = "2021"
 repository = "https://github.com/wuisabel-gif/MemWhale"
-readme = "../../README.md"
+readme = "README.md"
+keywords = ["terminal", "memory", "cli", "mcp", "sqlite"]
+categories = ["command-line-utilities", "development-tools"]
 
-# No Tauri, no GTK/WebKit: this is what lets `cargo install mw-cli` and the
-# aarch64 (Jetson) release builds work on a bare machine.
+# No Tauri, no GTK/WebKit: this is what lets `cargo install memorywhale-cli` and
+# the aarch64 (Jetson) release builds work on a bare machine.
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"

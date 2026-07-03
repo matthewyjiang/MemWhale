@@ -85,7 +85,7 @@ fn tool_defs() -> Value {
 }
 
 fn open() -> Result<Connection, String> {
-    let path = mw_cli::database_path()?;
+    let path = memorywhale_cli::database_path()?;
     Connection::open(&path).map_err(|e| format!("failed to open {}: {e}", path.display()))
 }
 

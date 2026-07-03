@@ -72,9 +72,9 @@ fn run() -> Result<(), String> {
             argv_json,
             cwd,
             exit_code,
-            mw_cli::redact(&stdout),
-            mw_cli::redact(&stderr),
-            mw_cli::redact(&notes),
+            memorywhale_cli::redact(&stdout),
+            memorywhale_cli::redact(&stderr),
+            memorywhale_cli::redact(&notes),
             created_at
         ],
     )

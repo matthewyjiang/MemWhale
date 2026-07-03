@@ -821,7 +821,7 @@ fn clean_transcript(input: &str) -> String {
     let s = s.replace('\r', "");
     let cleaned = ctrl.replace_all(&s, "").into_owned();
     // Scrub secrets before the transcript is stored (env dumps, pasted tokens).
-    mw_cli::redact(&cleaned)
+    memorywhale_cli::redact(&cleaned)
 }
 
 /// Send this machine's memory to a teammate: make a clean DB snapshot, scp it
@@ -1018,8 +1018,8 @@ fn search_memory(args: &[String]) -> Result<(), String> {
 
     // Command runs: prefer the FTS5 index (scales to large histories); fall back
     // to a LIKE scan if the index or FTS5 itself is unavailable.
-    let _ = mw_cli::ensure_fts(&conn);
-    let fts = mw_cli::fts_match_query(&query);
+    let _ = memorywhale_cli::ensure_fts(&conn);
+    let fts = memorywhale_cli::fts_match_query(&query);
     let collect_cmds = |sql: &str, param: &str| -> Result<Vec<(i64, String, Option<i64>, String, String)>, String> {
         let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
         let rows = stmt

@@ -39,7 +39,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build CLI (no Tauri/GTK)
-        run: cargo build --release -p mw-cli --target ${{ matrix.target }}
+        run: cargo build --release -p memorywhale-cli --target ${{ matrix.target }}
 
       - name: Package tarball
         id: package
@@ -61,7 +61,7 @@ jobs:
         if: matrix.deb
         run: |
           cargo install cargo-deb --locked
-          cargo deb -p mw-cli --target ${{ matrix.target }} --no-build --output "memorywhale_${{ matrix.target }}.deb"
+          cargo deb -p memorywhale-cli --target ${{ matrix.target }} --no-build --output "memorywhale_${{ matrix.target }}.deb"
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
