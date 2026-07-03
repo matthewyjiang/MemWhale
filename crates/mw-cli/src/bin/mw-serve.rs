@@ -284,10 +284,12 @@ fn dashboard(query: &str) -> String {
         body.push_str("</div>\n");
     }
 
-    body.push_str("<h2>Command runs</h2>\n<div class=\"list\">\n");
+    body.push_str("<h2>Command runs</h2>\n");
     let mut rows = 0;
+    let mut cur_date = String::new();
+    let mut list_open = false;
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, command, argv_json, exit_code, created_at, notes FROM command_runs ORDER BY id DESC LIMIT 200",
+        "SELECT id, command, argv_json, exit_code, created_at, notes FROM command_runs ORDER BY created_at DESC, id DESC LIMIT 200",
     ) {
         if let Ok(iter) = stmt.query_map([], |r| {
             Ok((
@@ -301,6 +303,18 @@ fn dashboard(query: &str) -> String {
         }) {
             for row in iter.flatten() {
                 let (id, cmd, argv_json, code, at, notes) = row;
+                let day = date_of(&at);
+                if day != cur_date {
+                    if list_open {
+                        body.push_str("</div>\n");
+                    }
+                    body.push_str(&format!(
+                        "<div class=\"datehead\">{}</div>\n<div class=\"list\">\n",
+                        esc(day)
+                    ));
+                    cur_date = day.to_string();
+                    list_open = true;
+                }
                 let full = full_command(&argv_json, &cmd);
                 let ok = code == Some(0);
                 body.push_str(&format!(
@@ -309,22 +323,26 @@ fn dashboard(query: &str) -> String {
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
                     esc_redacted(&full),
-                    esc(&at),
+                    esc(time_of(&at)),
                     esc_redacted(&notes)
                 ));
                 rows += 1;
             }
         }
     }
-    if rows == 0 {
-        body.push_str("<p class=\"empty\">No command runs yet. Record one with <code>mw-remember</code>.</p>\n");
+    if list_open {
+        body.push_str("</div>\n");
     }
-    body.push_str("</div>\n");
+    if rows == 0 {
+        body.push_str("<div class=\"list\"><p class=\"empty\">No command runs yet. Record one with <code>mw-remember</code>.</p></div>\n");
+    }
 
-    body.push_str("<h2>Sessions</h2>\n<div class=\"list\">\n");
+    body.push_str("<h2>Sessions</h2>\n");
     let mut srows = 0;
+    let mut cur_date = String::new();
+    let mut list_open = false;
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, started_at, ended_at, byte_count, notes, status FROM sessions ORDER BY id DESC LIMIT 200",
+        "SELECT id, started_at, ended_at, byte_count, notes, status FROM sessions ORDER BY started_at DESC, id DESC LIMIT 200",
     ) {
         if let Ok(iter) = stmt.query_map([], |r| {
             Ok((
@@ -338,15 +356,29 @@ fn dashboard(query: &str) -> String {
         }) {
             for row in iter.flatten() {
                 let (id, at, ended_at, bytes, notes, status) = row;
+                let day = date_of(&at);
+                if day != cur_date {
+                    if list_open {
+                        body.push_str("</div>\n");
+                    }
+                    body.push_str(&format!(
+                        "<div class=\"datehead\">{}</div>\n<div class=\"list\">\n",
+                        esc(day)
+                    ));
+                    cur_date = day.to_string();
+                    list_open = true;
+                }
                 body.push_str(&session_row(id, &at, &ended_at, bytes, &notes, &status));
                 srows += 1;
             }
         }
     }
-    if srows == 0 {
-        body.push_str("<p class=\"empty\">No sessions yet. Record one with <code>mw</code>.</p>\n");
+    if list_open {
+        body.push_str("</div>\n");
     }
-    body.push_str("</div>\n");
+    if srows == 0 {
+        body.push_str("<div class=\"list\"><p class=\"empty\">No sessions yet. Record one with <code>mw</code>.</p></div>\n");
+    }
 
     body.push_str("<h2>Bookmarks</h2>\n<div class=\"list\">\n");
     let mut brows = 0;
@@ -512,6 +544,25 @@ fn search_results(conn: &Connection, query: &str) -> String {
     }
     out.push_str("</div>\n");
     out
+}
+
+/// The `YYYY-MM-DD` part of an RFC3339 timestamp, used to group rows by day.
+/// Falls back to the whole string if it isn't a recognizable date.
+fn date_of(ts: &str) -> &str {
+    if ts.len() >= 10 && ts.as_bytes().get(4) == Some(&b'-') {
+        &ts[..10]
+    } else {
+        ts
+    }
+}
+
+/// The `HH:MM:SS` part of an RFC3339 timestamp (whole string if not one).
+fn time_of(ts: &str) -> &str {
+    if ts.len() >= 19 && ts.as_bytes().get(10) == Some(&b'T') {
+        &ts[11..19]
+    } else {
+        ts
+    }
 }
 
 fn session_row(
@@ -1146,6 +1197,7 @@ h2{font-size:.95rem;margin:1.8em 0 .6em;text-transform:uppercase;letter-spacing:
 .search input{flex:1;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px;font:600 .9rem ui-monospace,monospace;color:var(--ink)}
 .search button{border:0;border-radius:10px;background:var(--azure);color:#fff;padding:10px 14px;font:700 .85rem ui-monospace,monospace;cursor:pointer}
 .list{display:flex;flex-direction:column;gap:8px}
+.datehead{margin:1.4em 0 .5em;font:600 .8rem ui-monospace,monospace;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:.3em}
 .row{display:grid;grid-template-columns:90px 1fr 1.2fr 1.4fr;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px;transition:border-color .15s}
 .row:hover{border-color:var(--azure)}
 .row .cmd{font:600 .95rem ui-monospace,monospace}
