@@ -11,7 +11,7 @@
 //   mw-serve --port 8080     serve on a different port
 //   mw-serve --host 127.0.0.1  bind to localhost only
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Local, Utc};
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -155,8 +155,22 @@ fn handle(mut stream: TcpStream) {
         }
     }
 
+    let mut cookies: Vec<String> = Vec::new();
+
+    // Display timezone: `?tz=` selects it (and remembers it in a cookie);
+    // otherwise fall back to the cookie, else the server's local time.
+    let cookie_tz = cookie
+        .split(';')
+        .find_map(|c| c.trim().strip_prefix("mw_tz=").map(str::to_string));
+    match query_param(&raw_path, "tz") {
+        Some(tz) => {
+            set_display_tz(parse_tz(&tz));
+            cookies.push(format!("mw_tz={tz}; Path=/; SameSite=Strict; Max-Age=31536000"));
+        }
+        None => set_display_tz(cookie_tz.as_deref().map(parse_tz).unwrap_or(DisplayTz::Local)),
+    }
+
     // Optional shared-token gate. A valid ?token= sets a cookie so links keep working.
-    let mut set_cookie: Option<String> = None;
     if let Some(want) = AUTH_TOKEN.get() {
         let via_query = query_param(&raw_path, "token").as_deref() == Some(want.as_str());
         let via_cookie = cookie
@@ -164,7 +178,7 @@ fn handle(mut stream: TcpStream) {
             .filter_map(|c| c.trim().strip_prefix("mw_token="))
             .any(|v| v == want);
         if via_query {
-            set_cookie = Some(format!("mw_token={want}; Path=/; HttpOnly; SameSite=Strict"));
+            cookies.push(format!("mw_token={want}; Path=/; HttpOnly; SameSite=Strict"));
         } else if !via_cookie {
             let body =
                 page("Unauthorized", "<p>This dashboard requires a token. Append <code>?token=…</code> to the URL.</p>");
@@ -179,9 +193,10 @@ fn handle(mut stream: TcpStream) {
     }
 
     let (status, body) = route(&raw_path);
-    let cookie_header = set_cookie
+    let cookie_header: String = cookies
+        .iter()
         .map(|c| format!("Set-Cookie: {c}\r\n"))
-        .unwrap_or_default();
+        .collect();
     let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n{cookie_header}Connection: close\r\n\r\n",
         body.as_bytes().len()
@@ -266,6 +281,7 @@ fn dashboard(query: &str) -> String {
         "<form class=\"search\" method=\"get\" action=\"/\"><input name=\"q\" value=\"{}\" placeholder=\"Search commands, logs, notes, sessions, cwd, tags\"/><button type=\"submit\">Search</button></form>\n",
         esc(query)
     ));
+    body.push_str(&tz_selector());
 
     if !query.trim().is_empty() {
         body.push_str(&search_results(&conn, query));
@@ -308,7 +324,7 @@ fn dashboard(query: &str) -> String {
         }) {
             for row in iter.flatten() {
                 let (id, cmd, argv_json, code, at, notes) = row;
-                let day = date_of(&at);
+                let day = fmt_date(&at);
                 if day != cur_date {
                     if !cur_date.is_empty() {
                         push_day_group(&mut body, &cur_date, &group, gcount, first_group);
@@ -326,7 +342,7 @@ fn dashboard(query: &str) -> String {
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
                     esc_redacted(&full),
-                    esc(time_of(&at)),
+                    esc(&fmt_time(&at)),
                     esc_redacted(&notes)
                 ));
                 gcount += 1;
@@ -362,7 +378,7 @@ fn dashboard(query: &str) -> String {
         }) {
             for row in iter.flatten() {
                 let (id, at, ended_at, bytes, notes, status) = row;
-                let day = date_of(&at);
+                let day = fmt_date(&at);
                 if day != cur_date {
                     if !cur_date.is_empty() {
                         push_day_group(&mut body, &cur_date, &group, gcount, first_group);
@@ -401,7 +417,7 @@ fn dashboard(query: &str) -> String {
             for (id, label, cwd, created_at) in iter.flatten() {
                 body.push_str(&format!(
                     "<div class=\"row\"><span class=\"badge sess\">mark</span><span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} {}</span></div>\n",
-                    esc(&created_at),
+                    esc(&fmt_datetime(&created_at)),
                     esc_redacted(&label),
                     cwd.map(|c| format!("· {}", esc_redacted(&c))).unwrap_or_default()
                 ));
@@ -544,7 +560,7 @@ fn search_results(conn: &Connection, query: &str) -> String {
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
                     esc_redacted(&full_command(&argv_json, &cmd)),
-                    esc(&at),
+                    esc(&fmt_datetime(&at)),
                     tag_pills(&tags),
                     esc_redacted(&notes)
                 ));
@@ -601,7 +617,7 @@ fn search_results(conn: &Connection, query: &str) -> String {
             for (id, label, cwd, created_at) in iter.flatten() {
                 out.push_str(&format!(
                     "<div class=\"row\"><span class=\"badge sess\">mark</span><span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} {}</span></div>\n",
-                    esc(&created_at),
+                    esc(&fmt_datetime(&created_at)),
                     esc_redacted(&label),
                     cwd.map(|c| format!("· {}", esc_redacted(&c))).unwrap_or_default()
                 ));
@@ -615,6 +631,130 @@ fn search_results(conn: &Connection, query: &str) -> String {
     }
     out.push_str("</div>\n");
     out
+}
+
+/// Timezone the dashboard renders timestamps in, per-request (thread-local so it
+/// doesn't have to be threaded through every render function).
+#[derive(Clone, Copy)]
+enum DisplayTz {
+    Local,
+    Fixed(FixedOffset),
+}
+
+thread_local! {
+    static DISPLAY_TZ: std::cell::Cell<DisplayTz> = std::cell::Cell::new(DisplayTz::Local);
+}
+
+fn set_display_tz(tz: DisplayTz) {
+    DISPLAY_TZ.with(|c| c.set(tz));
+}
+fn cur_tz() -> DisplayTz {
+    DISPLAY_TZ.with(|c| c.get())
+}
+
+/// Parse a tz selection: "local", "utc", or a `±HH:MM` / `±HHMM` / `±H` offset.
+fn parse_tz(s: &str) -> DisplayTz {
+    let s = s.trim();
+    if s.is_empty() || s.eq_ignore_ascii_case("local") {
+        return DisplayTz::Local;
+    }
+    if s.eq_ignore_ascii_case("utc") {
+        return DisplayTz::Fixed(FixedOffset::east_opt(0).unwrap());
+    }
+    let sign = match s.as_bytes().first() {
+        Some(b'+') => 1,
+        Some(b'-') => -1,
+        _ => return DisplayTz::Local,
+    };
+    let rest = &s[1..];
+    let (h, m) = if let Some((h, m)) = rest.split_once(':') {
+        (h.parse::<i32>().ok(), m.parse::<i32>().ok())
+    } else if rest.len() == 4 {
+        (rest[..2].parse().ok(), rest[2..].parse().ok())
+    } else {
+        (rest.parse::<i32>().ok(), Some(0))
+    };
+    match (h, m) {
+        (Some(h), Some(m)) => FixedOffset::east_opt(sign * (h * 3600 + m * 60))
+            .map(DisplayTz::Fixed)
+            .unwrap_or(DisplayTz::Local),
+        _ => DisplayTz::Local,
+    }
+}
+
+fn parse_ts(ts: &str) -> Option<DateTime<FixedOffset>> {
+    DateTime::parse_from_rfc3339(ts).ok()
+}
+
+/// Format a stored (UTC) timestamp in the request's display timezone.
+fn fmt_with(ts: &str, pattern: &str, fallback: &str) -> String {
+    match parse_ts(ts) {
+        Some(dt) => match cur_tz() {
+            DisplayTz::Local => dt.with_timezone(&Local).format(pattern).to_string(),
+            DisplayTz::Fixed(o) => dt.with_timezone(&o).format(pattern).to_string(),
+        },
+        None => fallback.to_string(),
+    }
+}
+
+/// Local calendar date `YYYY-MM-DD` (for grouping headers).
+fn fmt_date(ts: &str) -> String {
+    fmt_with(ts, "%Y-%m-%d", date_of(ts))
+}
+/// Local `YYYY-MM-DD HH:MM` for row timestamps.
+fn fmt_datetime(ts: &str) -> String {
+    fmt_with(ts, "%Y-%m-%d %H:%M", ts)
+}
+/// Local `HH:MM:SS` for rows shown under a date header.
+fn fmt_time(ts: &str) -> String {
+    fmt_with(ts, "%H:%M:%S", time_of(ts))
+}
+
+/// The value string for the active tz (matches a selector option).
+fn cur_tz_value() -> String {
+    match cur_tz() {
+        DisplayTz::Local => "local".to_string(),
+        DisplayTz::Fixed(o) if o.local_minus_utc() == 0 => "utc".to_string(),
+        DisplayTz::Fixed(o) => {
+            let secs = o.local_minus_utc();
+            let sign = if secs < 0 { '-' } else { '+' };
+            let a = secs.abs();
+            format!("{sign}{:02}:{:02}", a / 3600, (a % 3600) / 60)
+        }
+    }
+}
+
+/// A no-JS timezone picker: pick a zone and hit Set. "Local" tracks your
+/// computer's clock (with daylight saving); the rest are fixed UTC offsets.
+fn tz_selector() -> String {
+    const OPTS: &[(&str, &str)] = &[
+        ("local", "Local (your computer)"),
+        ("utc", "UTC"),
+        ("-10:00", "UTC-10:00 · Hawaii"),
+        ("-09:00", "UTC-09:00 · Alaska"),
+        ("-08:00", "UTC-08:00 · US Pacific (PST)"),
+        ("-07:00", "UTC-07:00 · US Pacific (PDT) / Mountain"),
+        ("-06:00", "UTC-06:00 · US Central"),
+        ("-05:00", "UTC-05:00 · US Eastern"),
+        ("-03:00", "UTC-03:00"),
+        ("+01:00", "UTC+01:00 · Central Europe"),
+        ("+02:00", "UTC+02:00"),
+        ("+03:00", "UTC+03:00"),
+        ("+05:30", "UTC+05:30 · India"),
+        ("+08:00", "UTC+08:00 · China / Singapore"),
+        ("+09:00", "UTC+09:00 · Japan / Korea"),
+        ("+10:00", "UTC+10:00 · Sydney"),
+    ];
+    let cur = cur_tz_value();
+    let mut s = String::from(
+        "<form class=\"tzbar\" method=\"get\" action=\"/\"><label for=\"tz\">times shown in</label> <select id=\"tz\" name=\"tz\">",
+    );
+    for (v, l) in OPTS {
+        let sel = if *v == cur { " selected" } else { "" };
+        s.push_str(&format!("<option value=\"{v}\"{sel}>{}</option>", esc(l)));
+    }
+    s.push_str("</select> <button type=\"submit\">Set</button></form>");
+    s
 }
 
 /// The `YYYY-MM-DD` part of an RFC3339 timestamp, used to group rows by day.
@@ -672,7 +812,7 @@ fn session_row(
         "<a class=\"row\" href=\"/session/{id}\"><span class=\"badge {badge_class}\">{}</span>\
          <span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} · {bytes} bytes</span></a>\n",
         esc(badge_text),
-        esc(started_at),
+        esc(&fmt_datetime(started_at)),
         esc_redacted(&format!("{label} · {notes}"))
     )
 }
@@ -740,7 +880,7 @@ fn project_page(raw_name: &str) -> String {
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&at), esc_redacted(&notes)
+                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&fmt_datetime(&at)), esc_redacted(&notes)
                 );
                 items.push((at, row));
             }
@@ -841,7 +981,7 @@ fn repo_page(raw_name: &str) -> String {
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&at), esc_redacted(&notes)
+                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&fmt_datetime(&at)), esc_redacted(&notes)
                 );
                 items.push((at, row));
             }
@@ -943,7 +1083,7 @@ fn command_page(id: i64) -> Result<String, String> {
     }
     body.push_str(&format!(
         "<div><span>when</span>{}</div></div>\n",
-        esc(&created_at)
+        esc(&fmt_datetime(&created_at))
     ));
 
     body.push_str("<h2>Command</h2>\n");
@@ -1010,7 +1150,7 @@ fn session_page(id: i64) -> Result<String, String> {
     }
     body.push_str(&format!(
         "<div><span>started</span>{}</div>",
-        esc(&started_at)
+        esc(&fmt_datetime(&started_at))
     ));
     body.push_str(&format!(
         "<div><span>status</span>{}</div>",
@@ -1285,7 +1425,7 @@ fn runs_page(raw: &str) -> String {
                      <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>\n",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc_redacted(&full_command(&argv_json, &name)), esc(&at), esc_redacted(&notes)
+                    esc_redacted(&full_command(&argv_json, &name)), esc(&fmt_datetime(&at)), esc_redacted(&notes)
                 ));
                 rows += 1;
             }
@@ -1376,6 +1516,10 @@ h2{font-size:.95rem;margin:1.8em 0 .6em;text-transform:uppercase;letter-spacing:
 .search input{flex:1;border:1px solid var(--line);border-radius:10px;background:#fff;padding:10px 12px;font:600 .9rem ui-monospace,monospace;color:var(--ink)}
 .search button{border:0;border-radius:10px;background:var(--azure);color:#fff;padding:10px 14px;font:700 .85rem ui-monospace,monospace;cursor:pointer}
 .list{display:flex;flex-direction:column;gap:8px}
+.tzbar{display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:.8rem;color:var(--muted)}
+.tzbar select{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+.tzbar button{font:inherit;padding:4px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);cursor:pointer}
+.tzbar button:hover{border-color:var(--azure)}
 .daygroup{margin:1.1em 0}
 .datehead{margin:0 0 .5em;font:600 .8rem ui-monospace,monospace;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:.3em;cursor:pointer;user-select:none}
 .datehead:hover{color:var(--azure)}
