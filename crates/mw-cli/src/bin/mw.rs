@@ -41,6 +41,8 @@ fn run() -> Result<(), String> {
         Some("show") => return show_session(&raw_args[1..]),
         Some("list") => return list_sessions(),
         Some("mark") => return mark_bookmark(&raw_args[1..]),
+        Some("rm") => return rm_memory(&raw_args[1..]),
+        Some("discard") => return discard_cmd(),
         Some("replay") => return replay_command(&raw_args[1..]),
         Some("demo") => return seed_demo(),
         Some("export") => return export_memory(&raw_args[1..]),
@@ -129,6 +131,9 @@ fn record_session(notes: String, live: bool) -> Result<(), String> {
     let status = script
         .arg(&transcript_path)
         .env("MW_RECORDING", "1")
+        // Let `mw discard`, run inside the recorded shell, find and remove this
+        // transcript so the session is thrown away on exit.
+        .env("MW_TRANSCRIPT", &transcript_str)
         .status()
         .map_err(|err| format!("failed to launch `script` (is it installed?): {err}"))?;
 
@@ -141,8 +146,29 @@ fn record_session(notes: String, live: bool) -> Result<(), String> {
         None
     };
 
+    // `mw discard`, run inside the shell, leaves a marker next to the transcript.
+    let discard_marker = PathBuf::from(format!("{transcript_str}.discarded"));
+    if discard_marker.exists() {
+        let _ = fs::remove_file(&discard_marker);
+        let _ = fs::remove_file(&transcript_path);
+        if let Some(id) = live_session {
+            if let Ok(conn) = open_session_db() {
+                let _ = conn.execute("DELETE FROM sessions WHERE id = ?1", params![id]);
+            }
+        }
+        eprintln!("mw: session discarded — nothing saved.");
+        return Ok(());
+    }
+
     if !transcript_path.exists() {
-        return Err("recording produced no transcript (session not saved)".to_string());
+        // `script` never produced a transcript (e.g. it failed to launch).
+        if let Some(id) = live_session {
+            if let Ok(conn) = open_session_db() {
+                let _ = conn.execute("DELETE FROM sessions WHERE id = ?1", params![id]);
+            }
+        }
+        eprintln!("mw: recording produced no transcript — nothing saved.");
+        return Ok(());
     }
     let (id, byte_count) = if let Some(id) = live_session {
         let byte_count =
@@ -177,6 +203,8 @@ fn print_help() {
          mw list                  list recorded sessions\n\
          mw show <id>             print the full faithful transcript of a session\n\
          mw mark <text>           bookmark the current debugging moment\n\
+         mw rm [session|command] <id>  delete a saved item and its transcript\n\
+         mw discard               inside a recording: throw the current session away — nothing saved\n\
          mw replay <run-id>       rerun a saved command from command_runs\n\
          mw demo                  seed a small demo terminal-memory dataset\n\
          mw export [project:name] export memory to Markdown + JSON\n\
@@ -309,6 +337,71 @@ fn insert_finished_session(
     )
     .map_err(|err| format!("failed to insert session: {err}"))?;
     Ok((conn.last_insert_rowid(), byte_count))
+}
+
+/// Delete a saved session (default) or command run by id, including a session's
+/// transcript file so the dashboard can't re-recover it.
+fn rm_memory(args: &[String]) -> Result<(), String> {
+    let (kind, id): (&str, i64) = match args {
+        [k, id] if k == "session" || k == "command" => (
+            k.as_str(),
+            id.parse().map_err(|_| format!("invalid id {id:?}"))?,
+        ),
+        [id] => (
+            "session",
+            id.parse().map_err(|_| format!("invalid id {id:?}"))?,
+        ),
+        _ => return Err("usage: mw rm [session|command] <id>".to_string()),
+    };
+    let conn = open_session_db()?;
+    if kind == "session" {
+        match conn.query_row(
+            "SELECT transcript_path FROM sessions WHERE id = ?1",
+            params![id],
+            |r| r.get::<_, Option<String>>(0),
+        ) {
+            Ok(path) => {
+                if let Some(p) = path {
+                    let _ = fs::remove_file(&p);
+                }
+                conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])
+                    .map_err(|e| format!("failed to delete session: {e}"))?;
+                println!("mw: removed session #{id} (and its transcript).");
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Err(format!("no session #{id}")),
+            Err(e) => return Err(format!("failed to look up session: {e}")),
+        }
+    } else {
+        match conn.query_row("SELECT 1 FROM command_runs WHERE id = ?1", params![id], |_| Ok(())) {
+            Ok(()) => {
+                let _ = conn.execute(
+                    "DELETE FROM command_arguments WHERE command_run_id = ?1",
+                    params![id],
+                );
+                conn.execute("DELETE FROM command_runs WHERE id = ?1", params![id])
+                    .map_err(|e| format!("failed to delete command run: {e}"))?;
+                println!("mw: removed command run #{id}.");
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(format!("no command run #{id}"))
+            }
+            Err(e) => return Err(format!("failed to look up command run: {e}")),
+        }
+    }
+    Ok(())
+}
+
+/// Run inside a recorded shell to throw the current session away. Drops a marker
+/// file next to the transcript; the parent `mw` sees it on exit and saves nothing.
+fn discard_cmd() -> Result<(), String> {
+    let path = env::var("MW_TRANSCRIPT").map_err(|_| {
+        "mw discard only works inside a recorded session (started by `mw` or auto-record)."
+            .to_string()
+    })?;
+    fs::write(format!("{path}.discarded"), b"1")
+        .map_err(|e| format!("failed to mark session for discard: {e}"))?;
+    println!("mw: this session will NOT be saved. Type `exit` (or Ctrl-D) to close the shell.");
+    Ok(())
 }
 
 fn start_live_sync(id: i64, transcript_path: PathBuf) -> LiveSync {

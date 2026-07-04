@@ -8,7 +8,7 @@ _mw_complete() {
 
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "\
-list show mark replay demo search \
+list show mark replay demo search rm discard \
 export import push pull context doctor global \
 --live --notes --help" -- "$cur") )
     return
@@ -25,6 +25,9 @@ export import push pull context doctor global \
         ids="$(mw list 2>/dev/null | sed -n 's/^#\([0-9][0-9]*\).*/\1/p')"
         COMPREPLY=( $(compgen -W "$ids" -- "$cur") )
       fi
+      ;;
+    rm)
+      [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "session command" -- "$cur") )
       ;;
     import)
       # a bundle directory or an exported .sqlite3 file

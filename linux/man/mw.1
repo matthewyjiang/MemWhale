@@ -18,6 +18,12 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .B mw mark
 .I text
 .br
+.B mw rm
+.RB [ session | command ]
+.I id
+.br
+.B mw discard
+.br
 .B mw replay
 .I run-id
 .br
@@ -79,6 +85,14 @@ transcripts for a substring; prints matches with follow-up hints.
 .TP
 .BI "mw mark " text
 Bookmark the current debugging moment with a note.
+.TP
+.BI "mw rm [session|command] " id
+Delete a saved session (default) or command run by id. A session's transcript
+file is removed too, so the dashboard cannot re-recover it.
+.TP
+.B mw discard
+Run inside a recorded shell to throw the current session away: it is not saved
+when you exit. Useful when a terminal turned out to be garbage.
 .TP
 .BI "mw replay " run-id
 Rerun a saved command run from the database.

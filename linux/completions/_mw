@@ -12,6 +12,8 @@ _mw() {
     'list:list recorded sessions'
     'show:print the full transcript of a session'
     'mark:bookmark the current debugging moment'
+    'rm:delete a saved session or command run'
+    'discard:inside a recording, throw the current session away'
     'replay:rerun a saved command run'
     'demo:seed a small demo dataset'
     'search:search commands, output, notes, and transcripts'
@@ -42,6 +44,9 @@ _mw() {
       local -a ids
       ids=(${(f)"$(mw list 2>/dev/null | sed -n 's/^#\([0-9][0-9]*\).*/\1/p')"})
       _describe -t ids 'session id' ids
+      ;;
+    rm)
+      _values 'kind' session command
       ;;
     import)
       _files
