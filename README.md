@@ -70,6 +70,7 @@ mw-run -- cargo check                 # run one command, capture its output + ex
 mw list && mw show 1                  # inspect recorded sessions
 mw search "linker error"              # find it across commands, output, and transcripts
 mw remember "the fix was X"           # save a conclusion so it doesn't get re-derived
+mw git-fix                            # diagnose the last failed git command: what, why, the fix
 mw context --last-error               # the most recent failure, with its exact error
 mw-serve                              # web dashboard (works headless, e.g. on a Jetson)
 ```
@@ -77,6 +78,12 @@ mw-serve                              # web dashboard (works headless, e.g. on a
 Every command run stores the command, each argument as a searchable row, the
 cwd, exit code, stdout, stderr, and your notes. Captured output is scrubbed for
 common secret shapes (tokens, keys, `password=`) before it reaches SQLite.
+
+`mw git-fix` recognizes common git failures — push rejected, merge conflicts,
+a dirty working tree, diverged branches, SSH auth — from output MemoryWhale
+already captured, and tells you whether you've hit this exact one before (or
+already solved it via `mw remember`). A Neovim command for it — `:MwGitFix`,
+no need to leave the editor — is in [integrations/neovim/](integrations/neovim/README.md).
 
 📖 **Full command reference:** [docs/CLI.md](docs/CLI.md) — every `mw` subcommand
 and all the helper binaries (`mw-run`, `mw-serve`, `mw-mcp`, …), with flags and

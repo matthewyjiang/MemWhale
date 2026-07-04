@@ -15,6 +15,9 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .B mw search
 .I text
 .br
+.B mw git-fix
+.RI [ id ]
+.br
 .B mw mark
 .I text
 .br
@@ -99,6 +102,18 @@ Print the full faithful transcript of session
 .BI "mw search " text
 Search command runs (command, arguments, output, notes) and session
 transcripts for a substring; prints matches with follow-up hints.
+.TP
+.BI "mw git-fix " [id]
+Diagnose the last failed
+.B git
+command (or a specific
+.I command_run
+.IR id ):
+recognizes common failure shapes (push rejected, merge conflict, dirty working
+tree, diverged branches, unrelated histories, SSH auth), explains what
+happened, prints the fix, and checks whether this has come up before or was
+already resolved via
+.BR "mw remember" .
 .TP
 .BI "mw mark " text
 Bookmark the current debugging moment with a note.

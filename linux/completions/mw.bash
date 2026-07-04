@@ -8,7 +8,7 @@ _mw_complete() {
 
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "\
-list show mark remember replay demo search rm prune share discard \
+list show mark remember replay demo search git-fix rm prune share discard \
 export import push pull agent context doctor global \
 --live --notes --help" -- "$cur") )
     return
@@ -23,6 +23,14 @@ export import push pull agent context doctor global \
       if [ "$COMP_CWORD" -eq 2 ] && command -v mw >/dev/null 2>&1; then
         local ids
         ids="$(mw list 2>/dev/null | sed -n 's/^#\([0-9][0-9]*\).*/\1/p')"
+        COMPREPLY=( $(compgen -W "$ids" -- "$cur") )
+      fi
+      ;;
+    git-fix)
+      # command_run ids come from `mw search`; best-effort, no dedicated lister.
+      if [ "$COMP_CWORD" -eq 2 ] && command -v mw >/dev/null 2>&1; then
+        local ids
+        ids="$(mw search git 2>/dev/null | sed -n 's/^- #\([0-9][0-9]*\).*/\1/p')"
         COMPREPLY=( $(compgen -W "$ids" -- "$cur") )
       fi
       ;;

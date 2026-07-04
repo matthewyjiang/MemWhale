@@ -13,6 +13,7 @@ mw --live --notes "project:demo"      # autosave to SQLite every few seconds
 mw list                               # list recorded sessions
 mw show 1                             # print the full transcript of a session
 mw search "linker error"              # search commands, output, notes, transcripts
+mw git-fix                            # diagnose the last failed git command: what, why, the fix
 mw mark "before the risky flash"      # bookmark the current debugging moment
 mw remember "the fix was passing --features vendored-ssl"  # save a lesson/conclusion
 mw replay 12                          # rerun a saved command run
@@ -46,6 +47,17 @@ a fix worked, `mw remember` saves that conclusion so `mw search`/`mw context`
 surface it later instead of re-deriving it. For live agent access, register the
 MCP server instead (see `mw-mcp` below — it also exposes a `remember` tool, so
 the agent can write lessons itself).
+
+`mw git-fix` recognizes a handful of common git failure shapes — push rejected
+(non-fast-forward), merge conflicts, a dirty working tree blocking an
+operation, diverged branches, unrelated histories, and SSH auth failures — from
+the stderr already captured in `command_runs`. It explains what happened,
+prints the fix, and checks whether this exact class of failure has come up
+before (a past command run, or a lesson you already `mw remember`'d). With no
+argument it uses the most recent failed `git` command; `mw git-fix <id>`
+targets a specific `command_run` id (from `mw list`/`mw search`). Patterns it
+doesn't recognize get an honest "didn't recognize this" instead of a wrong
+guess.
 
 ## mw-run — capture one command
 

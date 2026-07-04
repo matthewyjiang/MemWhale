@@ -55,6 +55,7 @@ fn run() -> Result<(), String> {
         Some("context") => return context_cmd(&raw_args[1..]),
         Some("agent") => return agent_cmd(&raw_args[1..]),
         Some("search") => return search_memory(&raw_args[1..]),
+        Some("git-fix") => return git_fix_cmd(&raw_args[1..]),
         Some("doctor") => return doctor(),
         Some("global") => return global_cmd(&raw_args[1..]),
         Some("--help") | Some("-h") => {
@@ -219,6 +220,7 @@ fn print_help() {
          mw push <ssh-host>       send this machine's memory to a teammate (scp + remote mw import)\n\
          mw pull <ssh-host> [path] copy another machine's memory here and merge it (scp + import)\n\
          mw search <text>         search commands, output, notes, and session transcripts\n\
+         mw git-fix [id]          diagnose the last failed git command (or one by id): what happened, the fix, seen before?\n\
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
          mw agent [session-id]    export a full session as agent-ready text to paste later (default: latest)\n\
          mw doctor                check the install: data dir, database, `script`, and hook status\n\
@@ -1439,6 +1441,247 @@ fn search_memory(args: &[String]) -> Result<(), String> {
     }
     if !any {
         println!("(none)");
+    }
+    Ok(())
+}
+
+/// One recognizable git failure shape: how to spot it (substrings to look for
+/// in the captured stderr/stdout, matched case-insensitively), what it means,
+/// the fix, and the terms to use when checking whether this has happened
+/// before.
+struct GitPattern {
+    label: &'static str,
+    matches: &'static [&'static str],
+    explain: &'static str,
+    fix: &'static [&'static str],
+    search_terms: &'static [&'static str],
+}
+
+const GIT_PATTERNS: &[GitPattern] = &[
+    GitPattern {
+        label: "push rejected — the remote has commits you don't have",
+        matches: &["[rejected]", "non-fast-forward", "failed to push some refs"],
+        explain: "Someone (or another one of your machines) pushed to this branch since you last fetched. Git refuses to push over commits you haven't seen, so nothing was lost.",
+        fix: &[
+            "git fetch origin",
+            "git pull --rebase        # replay your commits on top of theirs (or: git pull, for a merge commit)",
+            "# resolve any conflicts the rebase reports, then:",
+            "git push",
+        ],
+        search_terms: &["non-fast-forward", "rejected"],
+    },
+    GitPattern {
+        label: "merge conflict",
+        matches: &["conflict (", "automatic merge failed", "fix conflicts and then commit"],
+        explain: "Two changes touched the same lines and git couldn't reconcile them automatically. Nothing is broken — the conflicted files just need a decision.",
+        fix: &[
+            "git status                    # lists the conflicted files",
+            "# open each one; resolve the <<<<<<< / ======= / >>>>>>> markers",
+            "git add <file>                 # mark each one resolved",
+            "git rebase --continue          # (or `git commit`, if this was a merge not a rebase)",
+            "# stuck? `git rebase --abort` / `git merge --abort` undoes everything, no risk",
+        ],
+        search_terms: &["conflict", "automatic merge failed"],
+    },
+    GitPattern {
+        label: "local changes would be overwritten (dirty working tree)",
+        matches: &[
+            "please commit your changes or stash them",
+            "would be overwritten by",
+            "your local changes to the following files would be overwritten",
+        ],
+        explain: "The operation (checkout/rebase/pull/merge) needs a clean working tree, but you have uncommitted edits in the way.",
+        fix: &[
+            "git stash                     # shelve your uncommitted changes",
+            "# retry the original command",
+            "git stash pop                 # bring your changes back",
+        ],
+        search_terms: &["commit your changes or stash them"],
+    },
+    GitPattern {
+        label: "diverged branches — no reconcile strategy configured",
+        matches: &["divergent branches", "need to specify how to reconcile"],
+        explain: "Your branch and its remote have both moved since the last common commit, and git wants to know whether to merge or rebase before it'll pull.",
+        fix: &[
+            "git config --global pull.rebase true   # make `git pull` always rebase (recommended)",
+            "git pull",
+        ],
+        search_terms: &["divergent branches", "reconcile"],
+    },
+    GitPattern {
+        label: "refusing to merge unrelated histories",
+        matches: &["refusing to merge unrelated histories"],
+        explain: "The two branches don't share a common ancestor commit — usually from re-initializing a repo or pulling into a freshly `git init`'d directory.",
+        fix: &["git pull origin <branch> --allow-unrelated-histories   # only if this merge is actually intentional"],
+        search_terms: &["unrelated histories"],
+    },
+    GitPattern {
+        label: "SSH authentication failure",
+        matches: &["permission denied (publickey)", "could not read from remote repository"],
+        explain: "The remote rejected your SSH key — it's missing, not loaded in the agent, or not added to your GitHub/GitLab account.",
+        fix: &[
+            "ssh -T git@github.com          # confirms whether auth actually works",
+            "ssh-add -l                     # is your key loaded in the agent?",
+            "ssh-add ~/.ssh/id_ed25519       # (or your key's path) load it",
+        ],
+        search_terms: &["permission denied (publickey)"],
+    },
+];
+
+fn classify_git_failure(text: &str) -> Option<&'static GitPattern> {
+    let hay = text.to_lowercase();
+    GIT_PATTERNS
+        .iter()
+        .find(|p| p.matches.iter().any(|m| hay.contains(m)))
+}
+
+/// Diagnose the last failed `git` command (or a specific `command_run` id):
+/// what the error means, the fix, and whether this exact class of failure has
+/// come up before — in past command runs or a remembered lesson.
+fn git_fix_cmd(args: &[String]) -> Result<(), String> {
+    let conn = open_session_db()?;
+
+    let row: Option<(i64, String, Option<i64>, String, String, String)> = if let Some(id_str) =
+        args.first()
+    {
+        let id: i64 = id_str
+            .parse()
+            .map_err(|_| format!("invalid id {id_str:?}"))?;
+        match conn.query_row(
+            "SELECT id, argv_json, exit_code, stdout, stderr, created_at FROM command_runs WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        ) {
+            Ok(r) => Some(r),
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Err(format!("no command run #{id}")),
+            Err(e) => return Err(format!("failed to read command run: {e}")),
+        }
+    } else {
+        conn.query_row(
+            "SELECT id, argv_json, exit_code, stdout, stderr, created_at FROM command_runs
+             WHERE command LIKE 'git%' AND exit_code IS NOT NULL AND exit_code != 0
+             ORDER BY id DESC LIMIT 1",
+            [],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
+        )
+        .ok()
+    };
+
+    let Some((id, argv_json, exit_code, stdout, stderr, created_at)) = row else {
+        println!(
+            "mw: no recent failed git commands found.\n\
+             Give a specific id with `mw git-fix <id>`, or make sure MemoryWhale is\n\
+             capturing your shell — `mw doctor` checks the install, `mw global on`\n\
+             turns on auto-recording."
+        );
+        return Ok(());
+    };
+
+    let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_default();
+    println!(
+        "# git-fix: command_run #{id} — `{}` (exit {}, {created_at})\n",
+        argv.join(" "),
+        exit_code.unwrap_or(-1)
+    );
+
+    let haystack = format!("{stderr}\n{stdout}");
+    match classify_git_failure(&haystack) {
+        Some(pattern) => {
+            println!("## {}\n", pattern.label);
+            println!("{}\n", pattern.explain);
+            println!("Fix:");
+            for step in pattern.fix {
+                println!("  {step}");
+            }
+
+            // Has this exact class of failure shown up before (or been solved)?
+            let like_params: Vec<String> =
+                pattern.search_terms.iter().map(|term| format!("%{term}%")).collect();
+            let cmd_clauses: Vec<String> = (1..=like_params.len())
+                .map(|i| format!("(stderr LIKE ?{i} OR stdout LIKE ?{i})"))
+                .collect();
+            let cmd_sql = format!(
+                "SELECT id, created_at FROM command_runs
+                 WHERE command LIKE 'git%' AND id != {id} AND ({})
+                 ORDER BY id DESC LIMIT 3",
+                cmd_clauses.join(" OR ")
+            );
+            let mut past_ids = Vec::new();
+            if let Ok(mut stmt) = conn.prepare(&cmd_sql) {
+                if let Ok(rows) = stmt.query_map(rusqlite::params_from_iter(like_params.iter()), |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+                }) {
+                    past_ids.extend(rows.flatten());
+                }
+            }
+
+            let bm_clauses: Vec<String> = (1..=like_params.len())
+                .map(|i| format!("label LIKE ?{i}"))
+                .collect();
+            let bm_sql = format!(
+                "SELECT label, created_at FROM bookmarks WHERE {} ORDER BY id DESC LIMIT 3",
+                bm_clauses.join(" OR ")
+            );
+            let mut lessons = Vec::new();
+            if let Ok(mut stmt) = conn.prepare(&bm_sql) {
+                if let Ok(rows) = stmt.query_map(rusqlite::params_from_iter(like_params.iter()), |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                }) {
+                    lessons.extend(rows.flatten());
+                }
+            }
+
+            println!();
+            if !lessons.is_empty() {
+                println!("You've saved a lesson about this before:");
+                for (label, at) in &lessons {
+                    println!("  - ({at}): {label}");
+                }
+            } else if !past_ids.is_empty() {
+                println!(
+                    "You've hit this before ({} time(s)) but never saved the fix:",
+                    past_ids.len()
+                );
+                for (pid, at) in &past_ids {
+                    println!("  - command_run #{pid} ({at}) — `mw git-fix {pid}` to see it, `mw show {pid}` for detail");
+                }
+            } else {
+                println!("First time this has shown up in your recorded memory.");
+            }
+            println!("\nOnce it's resolved, save the fix so this is instant next time:");
+            println!("  mw remember \"<what actually fixed it>\"");
+        }
+        None => {
+            println!(
+                "Didn't recognize this failure pattern. Raw error:\n\n  {}\n",
+                stderr
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or(stderr.trim())
+                    .trim()
+            );
+            println!("`git status` is usually the fastest way to see what git wants next.");
+            println!("Once you've fixed it, save it: `mw remember \"<what fixed it>\"` — the next unrecognized case gets easier to add to `mw git-fix` too.");
+        }
     }
     Ok(())
 }
