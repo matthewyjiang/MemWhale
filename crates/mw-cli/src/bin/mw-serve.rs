@@ -204,6 +204,9 @@ fn route(raw_path: &str) -> (&'static str, String) {
     if let Some(rest) = path.strip_prefix("/project/") {
         return ("200 OK", project_page(rest));
     }
+    if let Some(rest) = path.strip_prefix("/repo/") {
+        return ("200 OK", repo_page(rest));
+    }
     if let Some(rest) = path.strip_prefix("/runs/") {
         return ("200 OK", runs_page(rest));
     }
@@ -276,6 +279,22 @@ fn dashboard(query: &str) -> String {
         for (name, n) in names {
             body.push_str(&format!(
                 "<a class=\"chip\" href=\"/project/{}\">{} <span>{}</span></a>\n",
+                esc(name),
+                esc(name),
+                n
+            ));
+        }
+        body.push_str("</div>\n");
+    }
+
+    let repos = repo_counts(&conn);
+    if !repos.is_empty() {
+        let mut names: Vec<(&String, &i64)> = repos.iter().collect();
+        names.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        body.push_str("<h2>Repos</h2>\n<div class=\"chips\">\n");
+        for (name, n) in names {
+            body.push_str(&format!(
+                "<a class=\"chip\" href=\"/repo/{}\">{} <span>{}</span></a>\n",
                 esc(name),
                 esc(name),
                 n
@@ -415,6 +434,90 @@ fn dashboard(query: &str) -> String {
 }
 
 /// Extract a `project:<name>` tag from a notes string, if present.
+/// Nearest ancestor of `cwd` that is a git repository root (contains `.git`),
+/// as (root_path, basename). Filesystem-based, so it only resolves for paths
+/// that still exist on the machine running the dashboard.
+fn repo_of(cwd: &str) -> Option<(String, String)> {
+    if cwd.trim().is_empty() {
+        return None;
+    }
+    let mut dir: Option<&std::path::Path> = Some(std::path::Path::new(cwd));
+    while let Some(d) = dir {
+        if d.join(".git").exists() {
+            let name = d.file_name()?.to_string_lossy().into_owned();
+            return Some((d.to_string_lossy().into_owned(), name));
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// Unique git repo roots discovered across all recorded working directories.
+fn discovered_repo_roots(conn: &Connection) -> Vec<(String, String)> {
+    let mut seen: HashMap<String, String> = HashMap::new(); // root_path -> basename
+    for sql in ["SELECT cwd FROM command_runs", "SELECT cwd FROM sessions"] {
+        if let Ok(mut stmt) = conn.prepare(sql) {
+            if let Ok(it) = stmt.query_map([], |r| r.get::<_, Option<String>>(0)) {
+                for cwd in it.flatten().flatten() {
+                    if let Some((root, name)) = repo_of(&cwd) {
+                        seen.entry(root).or_insert(name);
+                    }
+                }
+            }
+        }
+    }
+    seen.into_iter().collect()
+}
+
+/// The repos a session touched: the repo of its start directory, plus any repo
+/// whose root path appears in the transcript. This is what lets a session that
+/// `cd`-ed between repos show up under each of them.
+fn session_repos(
+    cwd: &Option<String>,
+    transcript: &str,
+    roots: &[(String, String)],
+) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    if let Some(c) = cwd {
+        if let Some((_, name)) = repo_of(c) {
+            set.insert(name);
+        }
+    }
+    for (root, name) in roots {
+        if transcript.contains(root.as_str()) {
+            set.insert(name.clone());
+        }
+    }
+    set
+}
+
+/// Command-runs + sessions per repo (a session can count under several repos).
+fn repo_counts(conn: &Connection) -> HashMap<String, i64> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT cwd FROM command_runs") {
+        if let Ok(it) = stmt.query_map([], |r| r.get::<_, Option<String>>(0)) {
+            for cwd in it.flatten().flatten() {
+                if let Some((_, name)) = repo_of(&cwd) {
+                    *counts.entry(name).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    let roots = discovered_repo_roots(conn);
+    if let Ok(mut stmt) = conn.prepare("SELECT cwd, transcript FROM sessions") {
+        if let Ok(it) =
+            stmt.query_map([], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, String>(1)?)))
+        {
+            for (cwd, transcript) in it.flatten() {
+                for name in session_repos(&cwd, &transcript, &roots) {
+                    *counts.entry(name).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    counts
+}
+
 fn project_of(notes: &str) -> Option<String> {
     let re = Regex::new(r"project:([\w.\-]+)").ok()?;
     re.captures(notes).map(|c| c[1].to_string())
@@ -719,6 +822,101 @@ fn project_page(raw_name: &str) -> String {
         body.push_str("</code> yet. Record with <code>--notes \"project:");
         body.push_str(&esc(&name));
         body.push_str("\"</code>.</p>");
+    }
+    for (_, row) in items {
+        body.push_str(&row);
+        body.push('\n');
+    }
+    body.push_str("</div>\n");
+    page(&format!("{} · MemoryWhale", name), &body)
+}
+
+/// Everything that happened in a given git repo — command runs whose working
+/// directory is inside it, plus sessions that touched it (start dir or any repo
+/// path seen in the transcript), newest first.
+fn repo_page(raw_name: &str) -> String {
+    let name = raw_name.trim_end_matches('/').to_string();
+    let conn = match open_db() {
+        Ok(c) => c,
+        Err(e) => return page("Repo", &format!("<p>{}</p>", esc(&e))),
+    };
+    let _ = init_min_schema(&conn);
+    let roots = discovered_repo_roots(&conn);
+
+    let mut items: Vec<(String, String)> = Vec::new(); // (timestamp, row html)
+
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, command, argv_json, exit_code, created_at, notes, cwd FROM command_runs",
+    ) {
+        if let Ok(it) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+            ))
+        }) {
+            for (id, cmd, argv_json, code, at, notes, cwd) in it.flatten() {
+                let in_repo = cwd
+                    .as_deref()
+                    .and_then(repo_of)
+                    .map(|(_, n)| n)
+                    .as_deref()
+                    == Some(name.as_str());
+                if !in_repo {
+                    continue;
+                }
+                let ok = code == Some(0);
+                let row = format!(
+                    "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
+                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>",
+                    if ok { "ok" } else { "bad" },
+                    match code { Some(c) => format!("exit {c}"), None => "—".into() },
+                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&at), esc_redacted(&notes)
+                );
+                items.push((at, row));
+            }
+        }
+    }
+
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, started_at, ended_at, byte_count, notes, status, cwd, transcript FROM sessions",
+    ) {
+        if let Ok(it) = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, String>(7)?,
+            ))
+        }) {
+            for (id, at, ended_at, bytes, notes, status, cwd, transcript) in it.flatten() {
+                if !session_repos(&cwd, &transcript, &roots).contains(&name) {
+                    continue;
+                }
+                items.push((at.clone(), session_row(id, &at, &ended_at, bytes, &notes, &status)));
+            }
+        }
+    }
+
+    items.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+
+    let mut body = String::from("<a class=\"back\" href=\"/\">← all memory</a>\n");
+    body.push_str(&format!("<div class=\"eyebrow\">repo</div>\n<h1>{}</h1>\n", esc(&name)));
+    body.push_str(&format!(
+        "<p class=\"sub\">{} memory item(s) in this repository, newest first. A session that also touched another repo appears under that one too.</p>\n",
+        items.len()
+    ));
+    body.push_str("<div class=\"list\">\n");
+    if items.is_empty() {
+        body.push_str("<p class=\"empty\">Nothing recorded in a working directory under this repo yet.</p>");
     }
     for (_, row) in items {
         body.push_str(&row);
