@@ -18,7 +18,8 @@ mw replay 12                          # rerun a saved command run
 mw demo                               # seed a small demo dataset to explore
 mw rm 5                               # delete a session (+ its transcript); mw rm command <id> for a run
 mw discard                            # inside a recording: throw the current session away
-mw context [project:name] [--last-error] [--limit N]   # digest for AI agents
+mw context [project:name] [--last-error] [--limit N]   # compact failures digest for agents
+mw agent [session-id]                 # export a full session as text to paste into an agent
 mw doctor                             # check the install
 mw export [project:name]              # export a bundle (Markdown + JSON + SQLite)
 mw import <bundle|sqlite>             # merge another machine's export
@@ -33,6 +34,11 @@ SQLite. `--live` matters for SSH sessions and sudden shutdown risk: if the
 terminal dies before `exit`, the last autosaved transcript is still there.
 Recorded a garbage terminal? Type `mw discard` inside it before exiting, or
 `mw rm <id>` after the fact.
+
+`mw context` gives an agent a short digest of recent *failures*; `mw agent`
+dumps a whole *session transcript* as Markdown to hand over later — e.g.
+`mw agent > session.md` or `mw agent | pbcopy`. For live agent access, register
+the MCP server instead (see `mw-mcp` below).
 
 ## mw-run — capture one command
 

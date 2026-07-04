@@ -22,6 +22,7 @@ _mw() {
     'push:send this machine'\''s memory to a teammate over SSH'
     'pull:copy another machine'\''s memory here and merge it'
     'context:print a compact digest for an AI agent'
+    'agent:export a session as text to paste into an agent'
     'doctor:check the install'
     'global:auto-record every new terminal (on/off/status)'
   )

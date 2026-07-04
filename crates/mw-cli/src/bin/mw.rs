@@ -50,6 +50,7 @@ fn run() -> Result<(), String> {
         Some("push") => return push_memory(&raw_args[1..]),
         Some("pull") => return pull_memory(&raw_args[1..]),
         Some("context") => return context_cmd(&raw_args[1..]),
+        Some("agent") => return agent_cmd(&raw_args[1..]),
         Some("search") => return search_memory(&raw_args[1..]),
         Some("doctor") => return doctor(),
         Some("global") => return global_cmd(&raw_args[1..]),
@@ -213,6 +214,7 @@ fn print_help() {
          mw pull <ssh-host> [path] copy another machine's memory here and merge it (scp + import)\n\
          mw search <text>         search commands, output, notes, and session transcripts\n\
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
+         mw agent [session-id]    export a full session as agent-ready text to paste later (default: latest)\n\
          mw doctor                check the install: data dir, database, `script`, and hook status\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
          \n\
@@ -1279,6 +1281,109 @@ fn search_memory(args: &[String]) -> Result<(), String> {
     if !any {
         println!("(none)");
     }
+    Ok(())
+}
+
+/// Export a recorded session as agent-ready Markdown on stdout — pipe it to a
+/// file or the clipboard and paste it into an AI agent later. With an id it
+/// exports that session; otherwise the most recent one. Also appends a few
+/// recent failures for context.
+fn agent_cmd(args: &[String]) -> Result<(), String> {
+    let conn = open_session_db()?;
+
+    let session = if let Some(id_str) = args.first() {
+        let id: i64 = id_str
+            .parse()
+            .map_err(|_| format!("invalid session id {id_str:?}"))?;
+        match conn.query_row(
+            "SELECT id, notes, started_at, transcript FROM sessions WHERE id = ?1",
+            params![id],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        ) {
+            Ok(row) => Some(row),
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Err(format!("no session #{id}")),
+            Err(e) => return Err(format!("failed to read session: {e}")),
+        }
+    } else {
+        conn.query_row(
+            "SELECT id, notes, started_at, transcript FROM sessions
+             ORDER BY started_at DESC LIMIT 1",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .ok()
+    };
+
+    // Everything below goes to stdout so `mw agent | pbcopy` / `> file.md` is clean.
+    println!("# Terminal history from MemoryWhale\n");
+    println!(
+        "Below is recorded terminal activity — commands, output, and errors. \
+         Please help me understand or debug what happened.\n"
+    );
+
+    if let Some((id, notes, started_at, transcript)) = session {
+        println!("## Session #{id} — {started_at}");
+        if !notes.trim().is_empty() {
+            println!("notes: {}", notes.trim());
+        }
+        println!("\n```text\n{}\n```\n", transcript.trim());
+    } else {
+        println!("_(no recorded sessions yet)_\n");
+    }
+
+    // A few recent failures for extra context.
+    let mut stmt = conn
+        .prepare(
+            "SELECT argv_json, exit_code, stderr, created_at FROM command_runs
+             WHERE exit_code IS NOT NULL AND exit_code != 0
+             ORDER BY id DESC LIMIT 5",
+        )
+        .map_err(|err| format!("failed to prepare command query: {err}"))?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<i64>>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|err| format!("failed to read command runs: {err}"))?;
+    let mut any = false;
+    for row in rows {
+        let (argv_json, code, stderr, at) = row.map_err(|err| format!("row error: {err}"))?;
+        if !any {
+            println!("## Recent failed commands\n");
+            any = true;
+        }
+        let argv: Vec<String> = serde_json::from_str(&argv_json).unwrap_or_default();
+        println!("- `{}` (exit {}, {})", argv.join(" "), code.unwrap_or(-1), at);
+        let tail = stderr
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim();
+        if !tail.is_empty() {
+            println!("  ```\n  {tail}\n  ```");
+        }
+    }
+
+    eprintln!("\nmw: tip — `mw agent > session.md` to save, or `mw agent | pbcopy` to copy.");
     Ok(())
 }
 

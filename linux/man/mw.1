@@ -46,6 +46,9 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .RB [ --limit
 .IR n ]
 .br
+.B mw agent
+.RI [ session-id ]
+.br
 .B mw doctor
 .br
 .B mw global
@@ -127,6 +130,11 @@ to point at a different location.
 .BI "mw context " [project:name] " [--last-error] [--limit " n ]
 Print a compact, token-budgeted digest of recent failed commands and sessions,
 suitable for pasting into an AI agent.
+.TP
+.BI "mw agent " [session-id]
+Export a full session transcript (plus recent failures) as Markdown on stdout,
+to hand to an AI agent later. Defaults to the most recent session. Redirect or
+pipe it, e.g.\& \fBmw agent > session.md\fR or \fBmw agent | pbcopy\fR.
 .TP
 .B mw doctor
 Check the install: data directory, database, the
