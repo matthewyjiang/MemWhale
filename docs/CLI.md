@@ -15,6 +15,7 @@ mw show 1                             # print the full transcript of a session
 mw search "linker error"              # search commands, output, notes, transcripts
 mw mark "before the risky flash"      # bookmark the current debugging moment
 mw replay 12                          # rerun a saved command run
+mw demo                               # seed a small demo dataset to explore
 mw rm 5                               # delete a session (+ its transcript); mw rm command <id> for a run
 mw discard                            # inside a recording: throw the current session away
 mw context [project:name] [--last-error] [--limit N]   # digest for AI agents
