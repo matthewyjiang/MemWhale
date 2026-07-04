@@ -914,34 +914,57 @@ fn import_memory(args: &[String]) -> Result<(), String> {
         .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
         .unwrap_or(0);
 
+    // A source DB written by an older `mw` may be missing columns added later
+    // (e.g. sessions.status). Select `s.<col>` when present, else a default, so
+    // cross-version imports don't fail.
+    let sel = |cols: &std::collections::HashSet<String>, col: &str, default: &str| -> String {
+        if cols.contains(col) {
+            format!("s.{col}")
+        } else {
+            default.to_string()
+        }
+    };
+
     // command_runs: skip rows already present (same command, argv, and timestamp).
     if src_has("command_runs") {
-        conn.execute(
-            "INSERT INTO command_runs (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at)
-             SELECT s.command, s.argv_json, s.cwd, s.exit_code, s.stdout, s.stderr, s.notes, s.created_at
-             FROM src.command_runs s
-             WHERE NOT EXISTS (
-               SELECT 1 FROM command_runs m
-               WHERE m.command = s.command AND m.argv_json = s.argv_json AND m.created_at = s.created_at
-             )",
-            [],
-        )
-        .map_err(|err| format!("failed to merge command runs: {err}"))?;
+        let c = src_columns(&conn, "command_runs");
+        if c.contains("command") && c.contains("argv_json") && c.contains("created_at") {
+            let sql = format!(
+                "INSERT INTO command_runs (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at)
+                 SELECT {}, {}, {}, {}, {}, {}, {}, {}
+                 FROM src.command_runs s
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM command_runs m
+                   WHERE m.command = s.command AND m.argv_json = s.argv_json AND m.created_at = s.created_at
+                 )",
+                sel(&c, "command", "''"), sel(&c, "argv_json", "'[]'"), sel(&c, "cwd", "NULL"),
+                sel(&c, "exit_code", "NULL"), sel(&c, "stdout", "''"), sel(&c, "stderr", "''"),
+                sel(&c, "notes", "''"), sel(&c, "created_at", "''")
+            );
+            conn.execute(&sql, [])
+                .map_err(|err| format!("failed to merge command runs: {err}"))?;
+        }
     }
 
     // sessions: skip rows with the same start time and transcript path.
     if src_has("sessions") {
-        conn.execute(
-            "INSERT INTO sessions (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count, status)
-             SELECT s.shell, s.cwd, s.transcript_path, s.transcript, s.notes, s.started_at, s.ended_at, s.byte_count, s.status
-             FROM src.sessions s
-             WHERE NOT EXISTS (
-               SELECT 1 FROM sessions m
-               WHERE m.started_at = s.started_at AND m.transcript_path = s.transcript_path
-             )",
-            [],
-        )
-        .map_err(|err| format!("failed to merge sessions: {err}"))?;
+        let c = src_columns(&conn, "sessions");
+        if c.contains("started_at") && c.contains("transcript_path") {
+            let sql = format!(
+                "INSERT INTO sessions (shell, cwd, transcript_path, transcript, notes, started_at, ended_at, byte_count, status)
+                 SELECT {}, {}, {}, {}, {}, {}, {}, {}, {}
+                 FROM src.sessions s
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM sessions m
+                   WHERE m.started_at = s.started_at AND m.transcript_path = s.transcript_path
+                 )",
+                sel(&c, "shell", "''"), sel(&c, "cwd", "NULL"), sel(&c, "transcript_path", "''"),
+                sel(&c, "transcript", "''"), sel(&c, "notes", "''"), sel(&c, "started_at", "''"),
+                sel(&c, "ended_at", "''"), sel(&c, "byte_count", "0"), sel(&c, "status", "'finished'")
+            );
+            conn.execute(&sql, [])
+                .map_err(|err| format!("failed to merge sessions: {err}"))?;
+        }
     }
 
     // bookmarks: skip same label + timestamp.
@@ -975,6 +998,19 @@ fn import_memory(args: &[String]) -> Result<(), String> {
         src.display()
     );
     Ok(())
+}
+
+/// Column names present in an attached-source table (`src.<table>`).
+fn src_columns(conn: &Connection, table: &str) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    if let Ok(mut stmt) = conn.prepare("SELECT name FROM pragma_table_info(?1, 'src')") {
+        if let Ok(it) = stmt.query_map(params![table], |r| r.get::<_, String>(0)) {
+            for c in it.flatten() {
+                set.insert(c);
+            }
+        }
+    }
+    set
 }
 
 /// Split argv into the searchable command_arguments table for any command_run
