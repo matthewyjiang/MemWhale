@@ -5,7 +5,7 @@
 // Register with Claude Code:
 //   claude mcp add memorywhale -- mw-mcp
 //
-// Tools exposed: recent_errors, search_memory, get_context.
+// Tools exposed: recent_errors, search_memory, get_context, remember.
 
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
@@ -80,6 +80,13 @@ fn tool_defs() -> Value {
             "inputSchema": {"type": "object", "properties": {
                 "project": {"type": "string", "description": "project tag, e.g. project:demo"}
             }}
+        },
+        {
+            "name": "remember",
+            "description": "Save a freeform lesson or conclusion for later — e.g. 'the E0308 in camera-driver was the fps field being a string; fix: parse it as i32'. Use this once you've figured out *why* something failed or *how* a fix worked, so future sessions (yours or a teammate's) don't have to re-derive it. Findable later via search_memory and get_context.",
+            "inputSchema": {"type": "object", "properties": {
+                "text": {"type": "string", "description": "the lesson or conclusion to remember"}
+            }, "required": ["text"]}
         }
     ])
 }
@@ -105,6 +112,13 @@ fn call_tool(name: &str, args: &Value) -> Result<String, String> {
         "get_context" => {
             let project = args.get("project").and_then(Value::as_str);
             get_context(project)
+        }
+        "remember" => {
+            let text = args
+                .get("text")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "remember needs a 'text'".to_string())?;
+            remember_tool(text)
         }
         other => Err(format!("unknown tool: {other}")),
     }
@@ -191,6 +205,21 @@ fn search_memory(query: &str) -> Result<String, String> {
             }
         ));
     }
+    // Remembered lessons (`mw mark` / `mw remember` / this server's `remember`
+    // tool). The table may not exist yet on a DB that's only ever seen
+    // command_runs, so treat a missing table as zero results, not an error.
+    if let Ok(mut stmt) =
+        conn.prepare("SELECT label, created_at FROM bookmarks WHERE label LIKE ?1 ORDER BY id DESC LIMIT 20")
+    {
+        if let Ok(rows) =
+            stmt.query_map(params![like], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        {
+            for (label, created_at) in rows.flatten() {
+                out.push_str(&format!("- remembered ({created_at}): {label}\n"));
+            }
+        }
+    }
+
     Ok(if out.is_empty() {
         format!("(no matches for {query:?})")
     } else {
@@ -237,7 +266,33 @@ fn get_context(project: Option<&str>) -> Result<String, String> {
     if !any {
         out.push_str("(none)\n");
     }
+
+    // Remembered lessons — same missing-table tolerance as search_memory.
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT label, created_at FROM bookmarks
+         WHERE ?1 IS NULL OR label LIKE ?1 ORDER BY id DESC LIMIT 8",
+    ) {
+        if let Ok(rows) = stmt.query_map(params![like.as_deref()], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            let mut any_notes = false;
+            for (label, created_at) in rows.flatten() {
+                if !any_notes {
+                    out.push_str("\nRemembered lessons:\n");
+                    any_notes = true;
+                }
+                out.push_str(&format!("- ({created_at}): {label}\n"));
+            }
+        }
+    }
     Ok(out)
+}
+
+fn remember_tool(text: &str) -> Result<String, String> {
+    let id = memorywhale_cli::remember(text, None)?;
+    Ok(format!(
+        "Saved as memory #{id}. Future search_memory/get_context calls (yours or a teammate's) will find it."
+    ))
 }
 
 /// Last non-empty line, char-capped (safe on UTF-8).

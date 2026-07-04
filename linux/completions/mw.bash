@@ -8,7 +8,7 @@ _mw_complete() {
 
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "\
-list show mark replay demo search rm prune share discard \
+list show mark remember replay demo search rm prune share discard \
 export import push pull agent context doctor global \
 --live --notes --help" -- "$cur") )
     return

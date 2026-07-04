@@ -14,6 +14,7 @@ mw list                               # list recorded sessions
 mw show 1                             # print the full transcript of a session
 mw search "linker error"              # search commands, output, notes, transcripts
 mw mark "before the risky flash"      # bookmark the current debugging moment
+mw remember "the fix was passing --features vendored-ssl"  # save a lesson/conclusion
 mw replay 12                          # rerun a saved command run
 mw demo                               # seed a small demo dataset to explore
 mw rm 5                               # delete a session (+ its transcript); mw rm command <id> for a run
@@ -39,8 +40,12 @@ Recorded a garbage terminal? Type `mw discard` inside it before exiting, or
 
 `mw context` gives an agent a short digest of recent *failures*; `mw agent`
 dumps a whole *session transcript* as Markdown to hand over later — e.g.
-`mw agent > session.md` or `mw agent | pbcopy`. For live agent access, register
-the MCP server instead (see `mw-mcp` below).
+`mw agent > session.md` or `mw agent | pbcopy`. `mw remember`/`mw mark` share
+one store (a "note") — once you've figured out *why* something failed or *how*
+a fix worked, `mw remember` saves that conclusion so `mw search`/`mw context`
+surface it later instead of re-deriving it. For live agent access, register the
+MCP server instead (see `mw-mcp` below — it also exposes a `remember` tool, so
+the agent can write lessons itself).
 
 ## mw-run — capture one command
 

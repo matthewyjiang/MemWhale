@@ -41,6 +41,7 @@ fn run() -> Result<(), String> {
         Some("show") => return show_session(&raw_args[1..]),
         Some("list") => return list_sessions(),
         Some("mark") => return mark_bookmark(&raw_args[1..]),
+        Some("remember") => return remember_cmd(&raw_args[1..]),
         Some("rm") => return rm_memory(&raw_args[1..]),
         Some("prune") => return prune_cmd(&raw_args[1..]),
         Some("share") => return share_cmd(&raw_args[1..]),
@@ -206,6 +207,7 @@ fn print_help() {
          mw list                  list recorded sessions\n\
          mw show <id>             print the full faithful transcript of a session\n\
          mw mark <text>           bookmark the current debugging moment\n\
+         mw remember <text>       save a lesson/conclusion, e.g. \"the fix was passing --features vendored-ssl\"\n\
          mw rm [session|command] <id>  delete a saved item and its transcript\n\
          mw prune [--min-bytes N] [--dry-run]  delete empty auto-recorded sessions (noise cleanup)\n\
          mw share [session|command] <id> [-o file]  write a self-contained HTML page to send to someone\n\
@@ -584,13 +586,25 @@ fn mark_bookmark(args: &[String]) -> Result<(), String> {
     let cwd = env::current_dir()
         .ok()
         .and_then(|path| path.to_str().map(ToOwned::to_owned));
-    let conn = open_session_db()?;
-    conn.execute(
-        "INSERT INTO bookmarks (label, cwd, created_at) VALUES (?1, ?2, ?3)",
-        params![label, cwd, Utc::now().to_rfc3339()],
-    )
-    .map_err(|err| format!("failed to save bookmark: {err}"))?;
-    println!("mw: marked bookmark #{}", conn.last_insert_rowid());
+    let id = memorywhale_cli::remember(&label, cwd.as_deref())?;
+    println!("mw: marked bookmark #{id}");
+    Ok(())
+}
+
+/// Save a freeform lesson/conclusion (not tied to a specific command), so you
+/// or an agent can search it back out later with `mw search`/`mw context` or
+/// the MCP `search_memory` tool. Shares storage with `mw mark`.
+fn remember_cmd(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("usage: mw remember <text>".to_string());
+    }
+    let text = args.join(" ");
+    let cwd = env::current_dir()
+        .ok()
+        .and_then(|path| path.to_str().map(ToOwned::to_owned));
+    let id = memorywhale_cli::remember(&text, cwd.as_deref())?;
+    // Echo back what was actually stored (redacted), not the raw input.
+    println!("mw: remembered #{id}: {}", memorywhale_cli::redact(&text));
     Ok(())
 }
 
@@ -1399,6 +1413,33 @@ fn search_memory(args: &[String]) -> Result<(), String> {
     if !any {
         println!("(none)");
     }
+
+    // Remembered notes/lessons (`mw mark` / `mw remember`).
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, label, created_at FROM bookmarks
+             WHERE label LIKE ?1 ORDER BY id DESC LIMIT 30",
+        )
+        .map_err(|err| format!("failed to prepare notes search: {err}"))?;
+    let rows = stmt
+        .query_map(params![like], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|err| format!("failed to search notes: {err}"))?;
+    println!("\n## Notes");
+    let mut any = false;
+    for row in rows {
+        let (id, label, created_at) = row.map_err(|err| format!("row error: {err}"))?;
+        any = true;
+        println!("- #{id} {created_at}: {label}");
+    }
+    if !any {
+        println!("(none)");
+    }
     Ok(())
 }
 
@@ -1635,6 +1676,31 @@ fn context_cmd(args: &[String]) -> Result<(), String> {
                 format!(": {}", tail(&notes, 160))
             }
         );
+    }
+    if !any {
+        println!("(none)");
+    }
+
+    // Remembered lessons (`mw mark` / `mw remember`) — conclusions worth an
+    // agent seeing before it re-derives them from scratch.
+    let mut stmt = conn
+        .prepare(
+            "SELECT label, created_at FROM bookmarks
+             WHERE ?1 IS NULL OR label LIKE ?1
+             ORDER BY id DESC LIMIT ?2",
+        )
+        .map_err(|err| format!("failed to prepare notes query: {err}"))?;
+    let rows = stmt
+        .query_map(params![like.as_deref(), limit], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|err| format!("failed to read notes: {err}"))?;
+    println!("\n## Remembered lessons");
+    let mut any = false;
+    for row in rows {
+        let (label, created_at) = row.map_err(|err| format!("row error: {err}"))?;
+        any = true;
+        println!("- {created_at}: {}", tail(&label, 200));
     }
     if !any {
         println!("(none)");

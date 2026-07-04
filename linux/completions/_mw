@@ -12,6 +12,7 @@ _mw() {
     'list:list recorded sessions'
     'show:print the full transcript of a session'
     'mark:bookmark the current debugging moment'
+    'remember:save a lesson or conclusion for later'
     'rm:delete a saved session or command run'
     'prune:delete empty auto-recorded sessions'
     'share:write a self-contained HTML page to send to someone'

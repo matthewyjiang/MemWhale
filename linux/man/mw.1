@@ -18,6 +18,9 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .B mw mark
 .I text
 .br
+.B mw remember
+.I text
+.br
 .B mw rm
 .RB [ session | command ]
 .I id
@@ -99,6 +102,12 @@ transcripts for a substring; prints matches with follow-up hints.
 .TP
 .BI "mw mark " text
 Bookmark the current debugging moment with a note.
+.TP
+.BI "mw remember " text
+Save a freeform lesson or conclusion (e.g. what actually fixed a bug), so
+.BR "mw search" " and " "mw context"
+surface it later instead of it being re-derived. Shares storage with
+.BR "mw mark" .
 .TP
 .BI "mw rm [session|command] " id
 Delete a saved session (default) or command run by id. A session's transcript

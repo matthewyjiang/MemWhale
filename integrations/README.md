@@ -1,12 +1,18 @@
 # AI agent integrations
 
-Two ways to give an AI coding agent access to your MemoryWhale memory.
+Give an AI coding agent both sides of memory: it can *read* what already
+failed, and it can *write down* what it figured out.
 
-## 1. MCP server (recommended)
+## 1. MCP server (recommended) — the agent reads and writes
 
 `mw-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server
-over stdio. Register it once and the agent can query your memory with native
-tools (`recent_errors`, `search_memory`, `get_context`) — no copy-paste.
+over stdio. Register it once and the agent gets four native tools — no
+copy-paste:
+
+- `recent_errors` — recent failed commands with their error output
+- `search_memory` — search commands, output, notes, and remembered lessons
+- `get_context` — a compact digest of recent failures, optionally per project
+- `remember` — save a conclusion ("the fix was X") for its future self to find
 
 Claude Code:
 
@@ -23,7 +29,46 @@ Quick check that it responds:
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | mw-mcp
 ```
 
-## 2. Claude Code skill
+## 2. Claude Code hook — auto-capture what the agent runs
+
+The MCP server above is how the agent *reads and writes lessons*. This hook is
+how its *commands* get captured automatically, the same way `mw global on`
+auto-records your own terminals — without it, memory only grows when you
+manually run `mw`/`mw-run`.
+
+[`claude-code/hooks/mw-record.py`](claude-code/hooks/mw-record.py) is a
+`PostToolUse` hook: after Claude Code runs a Bash command, it saves the
+command, its output, and its exit status into MemoryWhale via `mw-remember`
+(so it's redacted like everything else). Non-Bash tool calls are ignored, and
+any failure here is swallowed — it can never block the agent's tool call.
+
+Add to your project's `.claude/settings.json` (or `~/.claude/settings.json`
+for every project):
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /absolute/path/to/MemWhale/integrations/claude-code/hooks/mw-record.py"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Requires `mw-remember` on `PATH` (it's part of the standard install). Combine
+with the skill below and the `remember` MCP tool, and the agent's failures and
+conclusions both accumulate automatically — next week's session inherits this
+week's debugging.
+
+## 3. Claude Code skill
 
 [`claude-code/memorywhale/SKILL.md`](claude-code/memorywhale/SKILL.md) teaches
 Claude Code *when* to reach for the memory (recurring failures, "how did we fix
@@ -35,9 +80,9 @@ cp -r integrations/claude-code/memorywhale ~/.claude/skills/
 ```
 
 The skill uses the MCP tools when connected and falls back to the `mw context`
-CLI otherwise, so it's useful with or without step 1.
+CLI otherwise, so it's useful with or without the MCP server.
 
-## Without either
+## Without any of these
 
 `mw context` prints a compact, paste-ready digest for any agent or chat:
 

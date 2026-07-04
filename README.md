@@ -69,6 +69,7 @@ mw --live                             # same, but autosaved — survives SSH dro
 mw-run -- cargo check                 # run one command, capture its output + exit code
 mw list && mw show 1                  # inspect recorded sessions
 mw search "linker error"              # find it across commands, output, and transcripts
+mw remember "the fix was X"           # save a conclusion so it doesn't get re-derived
 mw context --last-error               # the most recent failure, with its exact error
 mw-serve                              # web dashboard (works headless, e.g. on a Jetson)
 ```
@@ -85,10 +86,20 @@ examples.
 
 Coding agents forget everything between sessions. `mw-mcp` is a Model Context
 Protocol server over your local memory — register it once and Claude Code /
-Codex / Cursor can query past failures directly instead of re-deriving them:
+Codex / Cursor can query past failures directly instead of re-deriving them,
+and can write down what they figure out:
 
 ```bash
 claude mcp add memorywhale -- mw-mcp
+```
+
+That gives the agent four tools: `recent_errors`, `search_memory`,
+`get_context`, and `remember` — so once it works out *why* something failed,
+it can save that conclusion for its future self (or a teammate) to find later,
+the same way you'd type:
+
+```bash
+mw remember "the E0308 in camera-driver was the fps field being a string; fix: parse it as i32"
 ```
 
 Or, with no setup at all, paste a compact digest into any agent or chat:
@@ -97,8 +108,9 @@ Or, with no setup at all, paste a compact digest into any agent or chat:
 mw context --last-error
 ```
 
-See [integrations/](integrations/README.md) for the MCP tools and a Claude Code
-skill that knows when to reach for the memory.
+See [integrations/](integrations/README.md) for the MCP tools, a Claude Code
+hook that auto-records every command the agent runs, and a skill that knows
+when to read from (and write to) the memory.
 
 ## Web dashboard (solo or team)
 

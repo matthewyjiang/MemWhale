@@ -1,7 +1,8 @@
 //! Shared helpers for the MemoryWhale CLI binaries.
 
+use chrono::Utc;
 use regex::Regex;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -76,6 +77,37 @@ pub fn fts_match_query(query: &str) -> String {
         .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Save a freeform lesson or conclusion ("the fix was X") into the bookmarks
+/// table — the same store `mw mark` writes to. Shared by `mw remember` and the
+/// MCP `remember` tool, so a human and an agent write to the same place and
+/// either one can search it back out later.
+pub fn remember(text: &str, cwd: Option<&str>) -> Result<i64, String> {
+    let text = redact(text);
+    let path = database_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create data dir: {e}"))?;
+    }
+    let conn = Connection::open(&path).map_err(|e| format!("failed to open db: {e}"))?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS bookmarks (
+             id INTEGER PRIMARY KEY,
+             label TEXT NOT NULL,
+             cwd TEXT,
+             created_at TEXT NOT NULL,
+             command_run_id INTEGER,
+             session_id INTEGER
+         );
+         CREATE INDEX IF NOT EXISTS idx_bookmarks_created_at ON bookmarks(created_at);",
+    )
+    .map_err(|e| format!("failed to prepare bookmarks table: {e}"))?;
+    conn.execute(
+        "INSERT INTO bookmarks (label, cwd, created_at) VALUES (?1, ?2, ?3)",
+        params![text, cwd, Utc::now().to_rfc3339()],
+    )
+    .map_err(|e| format!("failed to save note: {e}"))?;
+    Ok(conn.last_insert_rowid())
 }
 
 const REDACTED: &str = "[REDACTED]";
@@ -201,5 +233,32 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1, "trigger should index the new row");
+    }
+
+    #[test]
+    fn remember_writes_and_redacts() {
+        let dir = std::env::temp_dir().join(format!(
+            "mw-remember-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("MEMORYWHALE_DATA_DIR", &dir);
+
+        let id = remember("the fix: API_KEY=abcdef123456 in .env", Some("/tmp/repo")).unwrap();
+        assert!(id > 0);
+
+        let conn = Connection::open(dir.join("memorywhale.sqlite3")).unwrap();
+        let (label, cwd): (String, Option<String>) = conn
+            .query_row(
+                "SELECT label, cwd FROM bookmarks WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(label.contains("[REDACTED]"), "secret should be redacted: {label}");
+        assert_eq!(cwd.as_deref(), Some("/tmp/repo"));
+
+        std::env::remove_var("MEMORYWHALE_DATA_DIR");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
