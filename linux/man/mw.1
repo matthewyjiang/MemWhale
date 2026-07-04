@@ -22,6 +22,17 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .RB [ session | command ]
 .I id
 .br
+.B mw prune
+.RB [ --min-bytes
+.IR n ]
+.RB [ --dry-run ]
+.br
+.B mw share
+.RB [ session | command ]
+.I id
+.RB [ -o
+.IR file ]
+.br
 .B mw discard
 .br
 .B mw replay
@@ -92,6 +103,21 @@ Bookmark the current debugging moment with a note.
 .BI "mw rm [session|command] " id
 Delete a saved session (default) or command run by id. A session's transcript
 file is removed too, so the dashboard cannot re-recover it.
+.TP
+.BI "mw prune [--min-bytes " n "] [--dry-run]"
+Delete empty/near-empty auto-recorded sessions \(em the noise left by opening a
+terminal and closing it. Only removes
+.B interrupted
+sessions below the byte threshold (default 200); deliberate finished sessions
+are kept.
+.B --dry-run
+shows what would go without deleting.
+.TP
+.BI "mw share [session|command] " id " [-o " file ]
+Write a self-contained, redacted HTML page for one memory (reusing
+.BR mw-view (1))
+so you can send it to a teammate. Defaults to
+.IR memory-<id>.html .
 .TP
 .B mw discard
 Run inside a recorded shell to throw the current session away: it is not saved

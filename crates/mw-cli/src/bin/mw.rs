@@ -42,6 +42,8 @@ fn run() -> Result<(), String> {
         Some("list") => return list_sessions(),
         Some("mark") => return mark_bookmark(&raw_args[1..]),
         Some("rm") => return rm_memory(&raw_args[1..]),
+        Some("prune") => return prune_cmd(&raw_args[1..]),
+        Some("share") => return share_cmd(&raw_args[1..]),
         Some("discard") => return discard_cmd(),
         Some("replay") => return replay_command(&raw_args[1..]),
         Some("demo") => return seed_demo(),
@@ -205,6 +207,8 @@ fn print_help() {
          mw show <id>             print the full faithful transcript of a session\n\
          mw mark <text>           bookmark the current debugging moment\n\
          mw rm [session|command] <id>  delete a saved item and its transcript\n\
+         mw prune [--min-bytes N] [--dry-run]  delete empty auto-recorded sessions (noise cleanup)\n\
+         mw share [session|command] <id> [-o file]  write a self-contained HTML page to send to someone\n\
          mw discard               inside a recording: throw the current session away — nothing saved\n\
          mw replay <run-id>       rerun a saved command from command_runs\n\
          mw demo                  seed a small demo terminal-memory dataset\n\
@@ -403,6 +407,120 @@ fn discard_cmd() -> Result<(), String> {
     fs::write(format!("{path}.discarded"), b"1")
         .map_err(|e| format!("failed to mark session for discard: {e}"))?;
     println!("mw: this session will NOT be saved. Type `exit` (or Ctrl-D) to close the shell.");
+    Ok(())
+}
+
+/// Delete empty/near-empty auto-recorded sessions — the noise left by opening a
+/// terminal and closing it without doing anything. Only touches `interrupted`
+/// sessions below the byte threshold; deliberate `finished` sessions are safe.
+fn prune_cmd(args: &[String]) -> Result<(), String> {
+    let mut min_bytes: i64 = 200;
+    let mut dry = false;
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--min-bytes" => {
+                min_bytes = iter
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| "--min-bytes needs a number".to_string())?;
+            }
+            "--dry-run" => dry = true,
+            other => {
+                return Err(format!(
+                    "unexpected argument {other:?}; usage: mw prune [--min-bytes N] [--dry-run]"
+                ))
+            }
+        }
+    }
+    let conn = open_session_db()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, transcript_path FROM sessions
+             WHERE status = 'interrupted' AND byte_count < ?1",
+        )
+        .map_err(|err| format!("failed to query sessions: {err}"))?;
+    let targets: Vec<(i64, Option<String>)> = stmt
+        .query_map(params![min_bytes], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|err| format!("query error: {err}"))?
+        .filter_map(Result::ok)
+        .collect();
+
+    if targets.is_empty() {
+        println!("mw: nothing to prune (no interrupted sessions under {min_bytes} bytes).");
+        return Ok(());
+    }
+    if dry {
+        println!(
+            "mw: would remove {} interrupted session(s) under {min_bytes} bytes (dry run).",
+            targets.len()
+        );
+        return Ok(());
+    }
+    let mut n = 0;
+    for (id, transcript_path) in &targets {
+        if let Some(p) = transcript_path {
+            let _ = fs::remove_file(p);
+        }
+        let _ = conn.execute("DELETE FROM sessions WHERE id = ?1", params![id]);
+        n += 1;
+    }
+    println!("mw: pruned {n} empty/interrupted session(s) (and their transcripts).");
+    Ok(())
+}
+
+/// Locate a sibling MemoryWhale binary (installed next to this one), falling
+/// back to the bare name on PATH.
+fn sibling_binary(name: &str) -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(name)))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
+/// Write a self-contained, redacted HTML page for one session or command run,
+/// to hand to a teammate. Reuses `mw-view`'s renderer.
+fn share_cmd(args: &[String]) -> Result<(), String> {
+    let mut kind: Option<&str> = None;
+    let mut id: Option<String> = None;
+    let mut output: Option<String> = None;
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "session" | "command" => kind = Some(if a == "session" { "session" } else { "command" }),
+            "-o" | "--output" => {
+                output = Some(
+                    iter.next()
+                        .cloned()
+                        .ok_or_else(|| "-o needs a file path".to_string())?,
+                )
+            }
+            other if other.starts_with('-') => {
+                return Err(format!("unknown option {other:?}; usage: mw share <id> [-o file.html]"))
+            }
+            other => id = Some(other.to_string()),
+        }
+    }
+    let id = id.ok_or_else(|| "usage: mw share [session|command] <id> [-o file.html]".to_string())?;
+    let output = output.unwrap_or_else(|| format!("memory-{id}.html"));
+
+    let mut cmd = Command::new(sibling_binary("mw-view"));
+    if let Some(k) = kind {
+        cmd.arg(k);
+    }
+    cmd.arg(&id).arg("--no-open").arg("-o").arg(&output);
+    let result = cmd
+        .output()
+        .map_err(|err| format!("failed to run mw-view (is MemoryWhale installed?): {err}"))?;
+    if !result.status.success() {
+        return Err(format!(
+            "could not render #{id}: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ));
+    }
+    println!("mw: wrote shareable page to {output}");
+    println!("    It's self-contained and local — send the file; nothing was uploaded.");
     Ok(())
 }
 

@@ -13,6 +13,8 @@ _mw() {
     'show:print the full transcript of a session'
     'mark:bookmark the current debugging moment'
     'rm:delete a saved session or command run'
+    'prune:delete empty auto-recorded sessions'
+    'share:write a self-contained HTML page to send to someone'
     'discard:inside a recording, throw the current session away'
     'replay:rerun a saved command run'
     'demo:seed a small demo dataset'
@@ -46,7 +48,7 @@ _mw() {
       ids=(${(f)"$(mw list 2>/dev/null | sed -n 's/^#\([0-9][0-9]*\).*/\1/p')"})
       _describe -t ids 'session id' ids
       ;;
-    rm)
+    rm|share)
       _values 'kind' session command
       ;;
     import)

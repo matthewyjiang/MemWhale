@@ -17,6 +17,8 @@ mw mark "before the risky flash"      # bookmark the current debugging moment
 mw replay 12                          # rerun a saved command run
 mw demo                               # seed a small demo dataset to explore
 mw rm 5                               # delete a session (+ its transcript); mw rm command <id> for a run
+mw prune [--min-bytes N] [--dry-run]  # delete empty auto-recorded sessions (noise cleanup)
+mw share 5 [-o file.html]             # write a self-contained HTML page of one item to send someone
 mw discard                            # inside a recording: throw the current session away
 mw context [project:name] [--last-error] [--limit N]   # compact failures digest for agents
 mw agent [session-id]                 # export a full session as text to paste into an agent

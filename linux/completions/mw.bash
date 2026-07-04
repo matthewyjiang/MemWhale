@@ -8,7 +8,7 @@ _mw_complete() {
 
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "\
-list show mark replay demo search rm discard \
+list show mark replay demo search rm prune share discard \
 export import push pull agent context doctor global \
 --live --notes --help" -- "$cur") )
     return
@@ -26,7 +26,7 @@ export import push pull agent context doctor global \
         COMPREPLY=( $(compgen -W "$ids" -- "$cur") )
       fi
       ;;
-    rm)
+    rm|share)
       [ "$COMP_CWORD" -eq 2 ] && COMPREPLY=( $(compgen -W "session command" -- "$cur") )
       ;;
     import)
