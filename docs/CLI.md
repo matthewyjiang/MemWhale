@@ -2,8 +2,8 @@
 
 All commands ship as prebuilt binaries (see the README's Install section). If
 you're working from a source checkout instead, prefix any command with
-`cargo run -p mw-cli --bin <name> --` from the repo root, e.g.
-`cargo run -p mw-cli --bin mw -- --notes "…"`.
+`cargo run -p memorywhale-cli --bin <name> --` from the repo root, e.g.
+`cargo run -p memorywhale-cli --bin mw -- --notes "…"`.
 
 ## mw — record sessions
 
@@ -15,11 +15,14 @@ mw show 1                             # print the full transcript of a session
 mw search "linker error"              # search commands, output, notes, transcripts
 mw mark "before the risky flash"      # bookmark the current debugging moment
 mw replay 12                          # rerun a saved command run
+mw rm 5                               # delete a session (+ its transcript); mw rm command <id> for a run
+mw discard                            # inside a recording: throw the current session away
 mw context [project:name] [--last-error] [--limit N]   # digest for AI agents
 mw doctor                             # check the install
 mw export [project:name]              # export a bundle (Markdown + JSON + SQLite)
 mw import <bundle|sqlite>             # merge another machine's export
-mw push <ssh-host>                    # snapshot + scp + remote mw import
+mw push <ssh-host>                    # send this machine's memory to another (scp + remote import)
+mw pull <ssh-host> [path]             # the reverse: copy another machine's memory here and merge it
 mw global on|off|status               # auto-record every new terminal
 ```
 
@@ -27,6 +30,8 @@ mw global on|off|status               # auto-record every new terminal
 to stop. The raw transcript lands in the data folder, searchable metadata in
 SQLite. `--live` matters for SSH sessions and sudden shutdown risk: if the
 terminal dies before `exit`, the last autosaved transcript is still there.
+Recorded a garbage terminal? Type `mw discard` inside it before exiting, or
+`mw rm <id>` after the fact.
 
 ## mw-run — capture one command
 

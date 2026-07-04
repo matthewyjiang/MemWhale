@@ -75,8 +75,11 @@ mw-serve                              # web dashboard (works headless, e.g. on a
 
 Every command run stores the command, each argument as a searchable row, the
 cwd, exit code, stdout, stderr, and your notes. Captured output is scrubbed for
-common secret shapes (tokens, keys, `password=`) before it reaches SQLite. Full
-flags and helpers: [docs/CLI.md](docs/CLI.md).
+common secret shapes (tokens, keys, `password=`) before it reaches SQLite.
+
+📖 **Full command reference:** [docs/CLI.md](docs/CLI.md) — every `mw` subcommand
+and all the helper binaries (`mw-run`, `mw-serve`, `mw-mcp`, …), with flags and
+examples.
 
 ## AI agents
 
