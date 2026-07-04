@@ -9,7 +9,7 @@ _mw_complete() {
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "\
 list show mark replay demo search \
-export import push context doctor global \
+export import push pull context doctor global \
 --live --notes --help" -- "$cur") )
     return
   fi
@@ -30,7 +30,7 @@ export import push context doctor global \
       # a bundle directory or an exported .sqlite3 file
       COMPREPLY=( $(compgen -f -- "$cur") )
       ;;
-    push)
+    push|pull)
       # ssh hosts from ~/.ssh/config
       local hosts
       hosts="$(sed -n 's/^[Hh]ost[[:space:]]\{1,\}\(.*\)/\1/p' ~/.ssh/config 2>/dev/null | tr ' ' '\n' | grep -v '[*?]')"

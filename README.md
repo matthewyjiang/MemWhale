@@ -150,6 +150,7 @@ Memory is local per machine, but you can move it:
 mw export project:demo   # bundle: Markdown + JSON + a SQLite copy
 mw import path/to/bundle # merge into this machine (skips duplicates)
 mw push jetson           # snapshot → scp → remote mw import, any ssh host
+mw pull jetson           # the reverse: copy a machine's memory here and merge it
 ```
 
 Nothing goes through a third party; it's your own `scp`/`ssh`.

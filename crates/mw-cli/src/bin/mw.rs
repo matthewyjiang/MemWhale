@@ -46,6 +46,7 @@ fn run() -> Result<(), String> {
         Some("export") => return export_memory(&raw_args[1..]),
         Some("import") => return import_memory(&raw_args[1..]),
         Some("push") => return push_memory(&raw_args[1..]),
+        Some("pull") => return pull_memory(&raw_args[1..]),
         Some("context") => return context_cmd(&raw_args[1..]),
         Some("search") => return search_memory(&raw_args[1..]),
         Some("doctor") => return doctor(),
@@ -181,6 +182,7 @@ fn print_help() {
          mw export [project:name] export memory to Markdown + JSON\n\
          mw import <bundle|sqlite> merge another machine's exported memory into this one\n\
          mw push <ssh-host>       send this machine's memory to a teammate (scp + remote mw import)\n\
+         mw pull <ssh-host> [path] copy another machine's memory here and merge it (scp + import)\n\
          mw search <text>         search commands, output, notes, and session transcripts\n\
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
          mw doctor                check the install: data dir, database, `script`, and hook status\n\
@@ -874,6 +876,41 @@ fn push_memory(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Pull a teammate's (or your other machine's) memory over SSH and merge it in:
+/// copy their database with scp, then import it locally. The mirror of `mw push`.
+fn pull_memory(args: &[String]) -> Result<(), String> {
+    let host = args
+        .first()
+        .ok_or_else(|| "usage: mw pull <ssh-host> [remote-db-path]".to_string())?;
+    // Default to the Linux/Jetson data dir; override with an explicit path arg.
+    let remote = args
+        .get(1)
+        .map(String::as_str)
+        .unwrap_or("~/.local/share/MemoryWhale/memorywhale.sqlite3");
+
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let local = std::env::temp_dir().join(format!("mw-pull-{stamp}.sqlite3"));
+    let local_str = local
+        .to_str()
+        .ok_or_else(|| "temp path is not valid UTF-8".to_string())?;
+
+    println!("mw: copying {host}:{remote} …");
+    let scp = Command::new("scp")
+        .arg(format!("{host}:{remote}"))
+        .arg(local_str)
+        .status()
+        .map_err(|err| format!("failed to run scp (is it installed?): {err}"))?;
+    if !scp.success() {
+        return Err(format!(
+            "scp from {host} failed (is MemoryWhale installed there? try `mw pull {host} <path-to-its-memorywhale.sqlite3>`)"
+        ));
+    }
+
+    let result = import_sqlite(&local);
+    let _ = fs::remove_file(&local);
+    result
+}
+
 /// Merge another machine's exported memory (a bundle dir or a raw .sqlite3)
 /// into the local database, skipping rows that are already present.
 fn import_memory(args: &[String]) -> Result<(), String> {
@@ -889,6 +926,13 @@ fn import_memory(args: &[String]) -> Result<(), String> {
     if !src.exists() {
         return Err(format!("no SQLite database found at {}", src.display()));
     }
+    import_sqlite(&src)
+}
+
+/// Attach a source SQLite database and merge its command runs, sessions, and
+/// bookmarks into the local database (skipping duplicates). Shared by
+/// `mw import` and `mw pull`.
+fn import_sqlite(src: &std::path::Path) -> Result<(), String> {
     let src_str = src
         .to_str()
         .ok_or_else(|| "import path is not valid UTF-8".to_string())?;

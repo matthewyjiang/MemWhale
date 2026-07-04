@@ -18,6 +18,7 @@ _mw() {
     'export:export memory to a bundle (Markdown + JSON + SQLite)'
     'import:merge another machine'\''s exported memory'
     'push:send this machine'\''s memory to a teammate over SSH'
+    'pull:copy another machine'\''s memory here and merge it'
     'context:print a compact digest for an AI agent'
     'doctor:check the install'
     'global:auto-record every new terminal (on/off/status)'
@@ -45,7 +46,7 @@ _mw() {
     import)
       _files
       ;;
-    push)
+    push|pull)
       _ssh_hosts 2>/dev/null || _hosts
       ;;
     context)

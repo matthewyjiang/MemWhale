@@ -30,6 +30,10 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .B mw push
 .I ssh-host
 .br
+.B mw pull
+.I ssh-host
+.RI [ path ]
+.br
 .B mw context
 .RI [ project:name ]
 .RB [ --last-error ]
@@ -96,6 +100,15 @@ and run
 there. Requires
 .B mw
 installed on the remote.
+.TP
+.BI "mw pull " ssh-host " [" path ]
+Copy another machine's memory database here with
+.BR scp (1)
+and merge it in. The mirror of
+.BR "mw push" .
+Defaults to the remote's Linux data directory; pass
+.I path
+to point at a different location.
 .TP
 .BI "mw context " [project:name] " [--last-error] [--limit " n ]
 Print a compact, token-budgeted digest of recent failed commands and sessions,
