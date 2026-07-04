@@ -271,22 +271,6 @@ fn dashboard(query: &str) -> String {
         body.push_str(&search_results(&conn, query));
     }
 
-    let projects = project_counts(&conn);
-    if !projects.is_empty() {
-        let mut names: Vec<(&String, &i64)> = projects.iter().collect();
-        names.sort_by(|a, b| a.0.cmp(b.0));
-        body.push_str("<h2>Projects</h2>\n<div class=\"chips\">\n");
-        for (name, n) in names {
-            body.push_str(&format!(
-                "<a class=\"chip\" href=\"/project/{}\">{} <span>{}</span></a>\n",
-                esc(name),
-                esc(name),
-                n
-            ));
-        }
-        body.push_str("</div>\n");
-    }
-
     let repos = repo_counts(&conn);
     if !repos.is_empty() {
         let mut names: Vec<(&String, &i64)> = repos.iter().collect();
@@ -524,24 +508,6 @@ fn project_of(notes: &str) -> Option<String> {
 }
 
 /// Count how many command runs + sessions belong to each project tag.
-fn project_counts(conn: &Connection) -> HashMap<String, i64> {
-    let mut counts: HashMap<String, i64> = HashMap::new();
-    for sql in [
-        "SELECT notes FROM command_runs",
-        "SELECT notes FROM sessions",
-    ] {
-        if let Ok(mut stmt) = conn.prepare(sql) {
-            if let Ok(it) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-                for notes in it.flatten() {
-                    if let Some(p) = project_of(&notes) {
-                        *counts.entry(p).or_insert(0) += 1;
-                    }
-                }
-            }
-        }
-    }
-    counts
-}
 
 fn search_results(conn: &Connection, query: &str) -> String {
     let needle = format!("%{}%", query.trim());
