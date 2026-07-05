@@ -25,7 +25,11 @@ jobs:
           - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             deb: true
-          - os: macos-13
+          # Both Mac targets build on the arm runner: it cross-compiles to
+          # x86_64-apple-darwin fine (Apple's toolchain links either natively),
+          # and macos-13 (Intel) runners are scarce/deprecated on GitHub —
+          # that job sat queued for 24h and got cancelled on the v0.3.0 release.
+          - os: macos-latest
             target: x86_64-apple-darwin
             deb: false
           - os: macos-latest
