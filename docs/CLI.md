@@ -24,7 +24,7 @@ mw share 5 [-o file.html]             # write a self-contained HTML page of one 
 mw discard                            # inside a recording: throw the current session away
 mw context [project:name] [--last-error] [--limit N]   # compact failures digest for agents
 mw agent [session-id]                 # export a full session as text to paste into an agent
-mw ask [question] [--session]         # package the last failure for ChatGPT/Claude → clipboard
+mw ask [question] [--chat gemini]     # package the last failure for your chat AI → clipboard
 mw doctor                             # check the install
 mw export [project:name]              # export a bundle (Markdown + JSON + SQLite)
 mw import <bundle|sqlite>             # merge another machine's export
@@ -55,9 +55,12 @@ one debugging prompt, copies it to the clipboard, and opens chatgpt.com — you
 paste (Cmd-V) and the chat has full context. No API key, and no per-token
 billing: it rides the flat-rate chat subscription you already pay for
 (ChatGPT/Claude/Gemini — effectively unlimited for daily debugging, where
-API-key tools meter every call). The payload is plain Markdown. Add a question (`mw ask "why does this keep breaking"`), include the
-tail of the current session with `--session`, or skip the browser with
-`--no-open`. Everything in the payload was secret-redacted at capture time.
+API-key tools meter every call). The payload is plain Markdown. Pick the chat
+with `--chat chatgpt|claude|gemini` (or any URL), or set a permanent default
+with `MEMORYWHALE_CHAT=gemini` in your shell rc. Add a question
+(`mw ask "why does this keep breaking"`), include the tail of the current
+session with `--session`, or skip the browser with `--no-open`. Everything in
+the payload was secret-redacted at capture time.
 
 `mw git-fix` recognizes a handful of common git failure shapes — push rejected
 (non-fast-forward), merge conflicts, a dirty working tree blocking an

@@ -224,7 +224,7 @@ fn print_help() {
          mw git-fix [id]          diagnose the last failed git command (or one by id): what happened, the fix, seen before?\n\
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
          mw agent [session-id]    export a full session as agent-ready text to paste later (default: latest)\n\
-         mw ask [question] [--session] [--no-open]  package the last failure + history for ChatGPT/Claude (clipboard)\n\
+         mw ask [question] [--chat chatgpt|claude|gemini|URL] [--session] [--no-open]  package the last failure for your chat AI\n\
          mw doctor                check the install: data dir, database, `script`, and hook status\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
          \n\
@@ -1821,6 +1821,21 @@ fn copy_to_clipboard(text: &str) -> bool {
     false
 }
 
+/// Map a chat target name to its URL. Accepts a full http(s) URL verbatim, so
+/// any chat provider works: `mw ask --chat https://example.com/chat`.
+fn resolve_chat_url(spec: &str) -> String {
+    match spec.to_lowercase().as_str() {
+        "chatgpt" | "gpt" | "openai" => "https://chatgpt.com".to_string(),
+        "claude" => "https://claude.ai/new".to_string(),
+        "gemini" => "https://gemini.google.com/app".to_string(),
+        s if s.starts_with("http://") || s.starts_with("https://") => spec.to_string(),
+        other => {
+            eprintln!("mw: unknown chat {other:?} (know: chatgpt, claude, gemini, or a URL) — using chatgpt");
+            "https://chatgpt.com".to_string()
+        }
+    }
+}
+
 fn open_url(url: &str) {
     let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     let _ = Command::new(opener)
@@ -1837,19 +1852,29 @@ fn open_url(url: &str) {
 fn ask_cmd(args: &[String]) -> Result<(), String> {
     let mut include_session = false;
     let mut no_open = false;
+    // Which chat to open: --chat flag beats the MEMORYWHALE_CHAT env default.
+    let mut chat = std::env::var("MEMORYWHALE_CHAT").unwrap_or_else(|_| "chatgpt".to_string());
     let mut question_words: Vec<String> = Vec::new();
-    for a in args {
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
         match a.as_str() {
             "--session" => include_session = true,
             "--no-open" => no_open = true,
+            "--chat" => {
+                chat = iter
+                    .next()
+                    .cloned()
+                    .ok_or_else(|| "--chat needs a value (chatgpt, claude, gemini, or a URL)".to_string())?;
+            }
             other if other.starts_with("--") => {
                 return Err(format!(
-                    "unknown option {other:?}; usage: mw ask [question] [--session] [--no-open]"
+                    "unknown option {other:?}; usage: mw ask [question] [--chat chatgpt|claude|gemini|URL] [--session] [--no-open]"
                 ))
             }
             other => question_words.push(other.to_string()),
         }
     }
+    let chat_url = resolve_chat_url(&chat);
     let question = question_words.join(" ");
     let conn = open_session_db()?;
 
@@ -2091,10 +2116,10 @@ fn ask_cmd(args: &[String]) -> Result<(), String> {
         if include_session { ", + session tail" } else { "" }
     );
     if copy_to_clipboard(&p) {
-        eprintln!("mw: ~{approx_tokens} tokens copied to clipboard — paste into ChatGPT/Claude (Cmd-V)");
+        eprintln!("mw: ~{approx_tokens} tokens copied to clipboard — paste at {chat_url} (Cmd-V)");
         if !no_open {
-            eprintln!("mw: opening https://chatgpt.com …");
-            open_url("https://chatgpt.com");
+            eprintln!("mw: opening {chat_url} …");
+            open_url(&chat_url);
         }
     } else {
         eprintln!("mw: no clipboard tool found (pbcopy/xclip/wl-copy) — printing instead:\n");

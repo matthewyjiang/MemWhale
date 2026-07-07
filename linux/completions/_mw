@@ -67,6 +67,7 @@ _mw() {
       ;;
     ask)
       _arguments \
+        '--chat[which chat to open]:target:(chatgpt claude gemini)' \
         '--session[append the tail of the current session]' \
         '--no-open[do not open the browser]'
       ;;

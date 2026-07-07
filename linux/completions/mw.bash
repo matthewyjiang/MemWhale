@@ -3,8 +3,9 @@
 #       or: source it from ~/.bashrc
 
 _mw_complete() {
-  local cur
+  local cur prev
   cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
 
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "\
@@ -51,7 +52,10 @@ export import push pull agent ask context doctor global \
       COMPREPLY=( $(compgen -W "--last-error --limit project:" -- "$cur") )
       ;;
     ask)
-      COMPREPLY=( $(compgen -W "--session --no-open" -- "$cur") )
+      case "$prev" in
+        --chat) COMPREPLY=( $(compgen -W "chatgpt claude gemini" -- "$cur") ); return ;;
+      esac
+      COMPREPLY=( $(compgen -W "--chat --session --no-open" -- "$cur") )
       ;;
     export)
       COMPREPLY=( $(compgen -W "project:" -- "$cur") )

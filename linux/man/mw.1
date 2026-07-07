@@ -68,6 +68,8 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .br
 .B mw ask
 .RI [ question ]
+.RB [ --chat
+.IR target ]
 .RB [ --session ]
 .RB [ --no-open ]
 .br
@@ -191,12 +193,18 @@ Export a full session transcript (plus recent failures) as Markdown on stdout,
 to hand to an AI agent later. Defaults to the most recent session. Redirect or
 pipe it, e.g.\& \fBmw agent > session.md\fR or \fBmw agent | pbcopy\fR.
 .TP
-.BI "mw ask " "[question] " "[--session] [--no-open]"
+.BI "mw ask " "[question] " "[--chat target] [--session] [--no-open]"
 Package the most recent failure \(em exact error, similar past failures,
-saved lessons \(em into one debugging prompt, copy it to the clipboard, and open
-chatgpt.com. Paste into whatever chat you already pay for (ChatGPT, Claude,
-Gemini); no API key, no per-token billing \(em it rides your flat-rate chat
-subscription instead of metered API calls.
+saved lessons \(em into one debugging prompt, copy it to the clipboard, and
+open your chat. Paste into whatever chat you already pay for; no API key, no
+per-token billing \(em it rides your flat-rate chat subscription instead of
+metered API calls.
+.BI --chat " target"
+picks the chat:
+.BR chatgpt " (default), " claude ", " gemini ,
+or any http(s) URL; set
+.B MEMORYWHALE_CHAT
+to change the default.
 .B --session
 appends the tail of the current session;
 .B --no-open
