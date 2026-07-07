@@ -109,10 +109,12 @@ the same way you'd type:
 mw remember "the E0308 in camera-driver was the fps field being a string; fix: parse it as i32"
 ```
 
-Or bring your own AI — no API key. `mw ask` packages the last failure (exact
-error + similar past failures + saved lessons) into one prompt on your
-clipboard and opens chatgpt.com; you press paste. Works with whatever chat you
-already pay for:
+Or bring your own AI — no API key, no per-token billing. Every "AI in your
+terminal" tool wants an API key that meters you by the token; `mw ask` instead
+uses the flat-rate chat subscription you already pay for (ChatGPT Plus, Claude
+Pro — effectively unlimited for daily debugging). It packages the last failure
+(exact error + similar past failures + saved lessons) into one prompt on your
+clipboard and opens chatgpt.com; you press paste:
 
 ```bash
 mw ask                          # or: mw ask "why does this keep breaking"

@@ -52,9 +52,10 @@ the agent can write lessons itself).
 `mw ask` is the bring-your-own-AI bridge: it packages the most recent failure
 (exact error, cwd, exit code) plus similar past failures and saved lessons into
 one debugging prompt, copies it to the clipboard, and opens chatgpt.com — you
-paste (Cmd-V) and the chat has full context. No API key; it uses whatever chat
-subscription you already have (ChatGPT/Claude/Gemini — the payload is plain
-Markdown). Add a question (`mw ask "why does this keep breaking"`), include the
+paste (Cmd-V) and the chat has full context. No API key, and no per-token
+billing: it rides the flat-rate chat subscription you already pay for
+(ChatGPT/Claude/Gemini — effectively unlimited for daily debugging, where
+API-key tools meter every call). The payload is plain Markdown. Add a question (`mw ask "why does this keep breaking"`), include the
 tail of the current session with `--session`, or skip the browser with
 `--no-open`. Everything in the payload was secret-redacted at capture time.
 
