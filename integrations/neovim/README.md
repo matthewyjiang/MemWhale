@@ -1,35 +1,45 @@
-# Neovim integration
+# Neovim plugin
 
-`mw-git-fix.lua` adds a `:MwGitFix` command that runs [`mw git-fix`](../../docs/CLI.md)
-in a terminal split, so you can diagnose the last failed git command — push
-rejected, merge conflict, dirty working tree, diverged branches, unrelated
-histories, SSH auth failures — without leaving the editor.
+`memorywhale.lua` brings MemoryWhale into the editor — four commands, no
+plugin manager required.
 
 ## Install
 
 ```bash
 mkdir -p ~/.config/nvim/lua
-cp integrations/neovim/mw-git-fix.lua ~/.config/nvim/lua/mw-git-fix.lua
+cp integrations/neovim/memorywhale.lua ~/.config/nvim/lua/memorywhale.lua
 ```
 
 Then in `init.lua`:
 
 ```lua
-require("mw-git-fix").setup()
--- optional: a keymap
-vim.keymap.set("n", "<leader>gf", ":MwGitFix<CR>", { desc = "MemoryWhale: diagnose last git failure" })
+require("memorywhale").setup()
+-- optional keymaps
+vim.keymap.set("n", "<leader>ma", ":MwAsk<CR>",    { desc = "MemoryWhale: ask ChatGPT about the last failure" })
+vim.keymap.set("n", "<leader>mg", ":MwGitFix<CR>", { desc = "MemoryWhale: diagnose last git failure" })
+vim.keymap.set("v", "<leader>mr", ":MwRemember<CR>", { desc = "MemoryWhale: remember selection" })
 ```
 
-## Usage
+## Commands
 
 ```
-:MwGitFix       diagnose the most recent failed git command
-:MwGitFix 42    diagnose a specific command_run id (from `mw list`/`mw search`)
+:MwAsk [question]      package the last failure (exact error + similar past
+                       failures + saved lessons) into a debugging prompt —
+                       clipboard filled, chatgpt.com opened; you paste.
+:MwGitFix [id]         diagnose the last failed git command (push rejected,
+                       merge conflict, …) with the fix and your history.
+:MwSearch {text}       full-text search commands, output, notes, transcripts.
+:MwRemember {text}     save a lesson. With a visual selection and no args,
+                       remembers the selected lines — select an error or a
+                       fix in any buffer and save it in one keystroke.
 ```
 
-Opens a terminal split running `mw git-fix`, which explains what the error
-means, prints the fix, and checks whether this exact failure — or a lesson
-you already saved with `mw remember` — has come up before.
+`:MwAsk`, `:MwGitFix`, and `:MwSearch` open in a terminal split; `:MwRemember`
+runs inline and notifies the result.
 
-Requires `mw` on `$PATH` (the standard MemoryWhale install). If it isn't
-found, `:MwGitFix` reports that instead of failing silently.
+Requires `mw` on `$PATH` (the standard MemoryWhale install). Every command
+reports clearly if it isn't found.
+
+> `mw-git-fix.lua` (the earlier single-command module) still works, but
+> `memorywhale.lua` includes `:MwGitFix` and supersedes it — install one, not
+> both.

@@ -82,8 +82,9 @@ common secret shapes (tokens, keys, `password=`) before it reaches SQLite.
 `mw git-fix` recognizes common git failures — push rejected, merge conflicts,
 a dirty working tree, diverged branches, SSH auth — from output MemoryWhale
 already captured, and tells you whether you've hit this exact one before (or
-already solved it via `mw remember`). A Neovim command for it — `:MwGitFix`,
-no need to leave the editor — is in [integrations/neovim/](integrations/neovim/README.md).
+already solved it via `mw remember`). There's a **Neovim plugin** too —
+`:MwAsk`, `:MwGitFix`, `:MwSearch`, and `:MwRemember` (which can save a visual
+selection as a lesson) — in [integrations/neovim/](integrations/neovim/README.md).
 
 📖 **Full command reference:** [docs/CLI.md](docs/CLI.md) — every `mw` subcommand
 and all the helper binaries (`mw-run`, `mw-serve`, `mw-mcp`, …), with flags and
