@@ -109,10 +109,14 @@ the same way you'd type:
 mw remember "the E0308 in camera-driver was the fps field being a string; fix: parse it as i32"
 ```
 
-Or, with no setup at all, paste a compact digest into any agent or chat:
+Or bring your own AI — no API key. `mw ask` packages the last failure (exact
+error + similar past failures + saved lessons) into one prompt on your
+clipboard and opens chatgpt.com; you press paste. Works with whatever chat you
+already pay for:
 
 ```bash
-mw context --last-error
+mw ask                          # or: mw ask "why does this keep breaking"
+mw context --last-error         # smaller digest, same idea, no browser
 ```
 
 See [integrations/](integrations/README.md) for the MCP tools, a Claude Code

@@ -24,6 +24,7 @@ mw share 5 [-o file.html]             # write a self-contained HTML page of one 
 mw discard                            # inside a recording: throw the current session away
 mw context [project:name] [--last-error] [--limit N]   # compact failures digest for agents
 mw agent [session-id]                 # export a full session as text to paste into an agent
+mw ask [question] [--session]         # package the last failure for ChatGPT/Claude → clipboard
 mw doctor                             # check the install
 mw export [project:name]              # export a bundle (Markdown + JSON + SQLite)
 mw import <bundle|sqlite>             # merge another machine's export
@@ -47,6 +48,15 @@ a fix worked, `mw remember` saves that conclusion so `mw search`/`mw context`
 surface it later instead of re-deriving it. For live agent access, register the
 MCP server instead (see `mw-mcp` below — it also exposes a `remember` tool, so
 the agent can write lessons itself).
+
+`mw ask` is the bring-your-own-AI bridge: it packages the most recent failure
+(exact error, cwd, exit code) plus similar past failures and saved lessons into
+one debugging prompt, copies it to the clipboard, and opens chatgpt.com — you
+paste (Cmd-V) and the chat has full context. No API key; it uses whatever chat
+subscription you already have (ChatGPT/Claude/Gemini — the payload is plain
+Markdown). Add a question (`mw ask "why does this keep breaking"`), include the
+tail of the current session with `--session`, or skip the browser with
+`--no-open`. Everything in the payload was secret-redacted at capture time.
 
 `mw git-fix` recognizes a handful of common git failure shapes — push rejected
 (non-fast-forward), merge conflicts, a dirty working tree blocking an

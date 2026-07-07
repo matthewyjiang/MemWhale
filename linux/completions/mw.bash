@@ -9,7 +9,7 @@ _mw_complete() {
   if [ "$COMP_CWORD" -eq 1 ]; then
     COMPREPLY=( $(compgen -W "\
 list show mark remember replay demo search git-fix rm prune share discard \
-export import push pull agent context doctor global \
+export import push pull agent ask context doctor global \
 --live --notes --help" -- "$cur") )
     return
   fi
@@ -49,6 +49,9 @@ export import push pull agent context doctor global \
       ;;
     context)
       COMPREPLY=( $(compgen -W "--last-error --limit project:" -- "$cur") )
+      ;;
+    ask)
+      COMPREPLY=( $(compgen -W "--session --no-open" -- "$cur") )
       ;;
     export)
       COMPREPLY=( $(compgen -W "project:" -- "$cur") )

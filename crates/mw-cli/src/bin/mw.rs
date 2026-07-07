@@ -54,6 +54,7 @@ fn run() -> Result<(), String> {
         Some("pull") => return pull_memory(&raw_args[1..]),
         Some("context") => return context_cmd(&raw_args[1..]),
         Some("agent") => return agent_cmd(&raw_args[1..]),
+        Some("ask") => return ask_cmd(&raw_args[1..]),
         Some("search") => return search_memory(&raw_args[1..]),
         Some("git-fix") => return git_fix_cmd(&raw_args[1..]),
         Some("doctor") => return doctor(),
@@ -223,6 +224,7 @@ fn print_help() {
          mw git-fix [id]          diagnose the last failed git command (or one by id): what happened, the fix, seen before?\n\
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
          mw agent [session-id]    export a full session as agent-ready text to paste later (default: latest)\n\
+         mw ask [question] [--session] [--no-open]  package the last failure + history for ChatGPT/Claude (clipboard)\n\
          mw doctor                check the install: data dir, database, `script`, and hook status\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
          \n\
@@ -1786,6 +1788,318 @@ fn agent_cmd(args: &[String]) -> Result<(), String> {
     }
 
     eprintln!("\nmw: tip — `mw agent > session.md` to save, or `mw agent | pbcopy` to copy.");
+    Ok(())
+}
+
+/// Copy text to the system clipboard via whichever tool exists. Returns false
+/// if none is available (caller prints the payload instead).
+fn copy_to_clipboard(text: &str) -> bool {
+    use std::io::Write as _;
+    for (cmd, args) in [
+        ("pbcopy", &[][..]),
+        ("xclip", &["-selection", "clipboard"][..]),
+        ("wl-copy", &[][..]),
+    ] {
+        let child = Command::new(cmd)
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(mut child) = child {
+            if let Some(stdin) = child.stdin.as_mut() {
+                if stdin.write_all(text.as_bytes()).is_ok() {
+                    if matches!(child.wait(), Ok(s) if s.success()) {
+                        return true;
+                    }
+                    continue;
+                }
+            }
+            let _ = child.wait();
+        }
+    }
+    false
+}
+
+fn open_url(url: &str) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let _ = Command::new(opener)
+        .arg(url)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Package the most recent failure — exact error, similar past failures, saved
+/// lessons — into one debugging prompt on the clipboard, and open a chat. The
+/// "bring your own AI" bridge: works with the user's ChatGPT/Claude/Gemini
+/// subscription, no API key; the human paste is the wire.
+fn ask_cmd(args: &[String]) -> Result<(), String> {
+    let mut include_session = false;
+    let mut no_open = false;
+    let mut question_words: Vec<String> = Vec::new();
+    for a in args {
+        match a.as_str() {
+            "--session" => include_session = true,
+            "--no-open" => no_open = true,
+            other if other.starts_with("--") => {
+                return Err(format!(
+                    "unknown option {other:?}; usage: mw ask [question] [--session] [--no-open]"
+                ))
+            }
+            other => question_words.push(other.to_string()),
+        }
+    }
+    let question = question_words.join(" ");
+    let conn = open_session_db()?;
+
+    // Last non-empty line of a text, char-capped.
+    let tail = |text: &str, max: usize| -> String {
+        let t = text
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim();
+        let chars: Vec<char> = t.chars().collect();
+        if chars.len() > max {
+            format!("…{}", chars[chars.len() - max..].iter().collect::<String>())
+        } else {
+            t.to_string()
+        }
+    };
+    // Cap a whole blob to its last `max` chars (keep the end — errors live there).
+    let cap_blob = |text: &str, max: usize| -> String {
+        let chars: Vec<char> = text.trim().chars().collect();
+        if chars.len() > max {
+            format!("…{}", chars[chars.len() - max..].iter().collect::<String>())
+        } else {
+            text.trim().to_string()
+        }
+    };
+
+    // The most recent failed command.
+    let failure = conn
+        .query_row(
+            "SELECT id, argv_json, cwd, exit_code, stderr, stdout, notes, created_at
+             FROM command_runs
+             WHERE exit_code IS NOT NULL AND exit_code != 0
+             ORDER BY id DESC LIMIT 1",
+            [],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, String>(7)?,
+                ))
+            },
+        )
+        .ok();
+
+    if failure.is_none() && question.is_empty() {
+        return Err(
+            "no failed commands in memory and no question given.\n\
+             Usage: mw ask [question]. Record failures with auto-record (`mw global on`)\n\
+             or `mw-run -- <command>`, then `mw ask` packages the latest one."
+                .to_string(),
+        );
+    }
+
+    // Words to find related history/lessons: from the error tail + the question.
+    let mut terms: Vec<String> = Vec::new();
+    if let Some((_, _, _, _, stderr, _, _, _)) = &failure {
+        terms.extend(
+            tail(stderr, 200)
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| w.len() >= 4)
+                .take(6)
+                .map(|w| w.to_lowercase()),
+        );
+    }
+    terms.extend(
+        question
+            .split_whitespace()
+            .filter(|w| w.len() >= 4)
+            .take(4)
+            .map(|w| w.to_lowercase()),
+    );
+    terms.dedup();
+
+    // Similar past failures (FTS if available, else LIKE on the first term).
+    let mut similar: Vec<(String, Option<i64>, String, Option<String>, String)> = Vec::new();
+    let exclude_id = failure.as_ref().map(|f| f.0).unwrap_or(-1);
+    if !terms.is_empty() {
+        let _ = memorywhale_cli::ensure_fts(&conn);
+        let collect = |sql: &str, param: &str| -> Vec<(String, Option<i64>, String, Option<String>, String)> {
+            let mut out = Vec::new();
+            if let Ok(mut stmt) = conn.prepare(sql) {
+                if let Ok(rows) = stmt.query_map(params![param, exclude_id], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Option<i64>>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, String>(4)?,
+                    ))
+                }) {
+                    out.extend(rows.flatten());
+                }
+            }
+            out
+        };
+        // OR-match any term: one strong term is enough to surface history.
+        let fts_or = terms
+            .iter()
+            .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        similar = collect(
+            "SELECT argv_json, exit_code, stderr, cwd, created_at FROM command_runs
+             WHERE exit_code IS NOT NULL AND exit_code != 0 AND id != ?2
+               AND id IN (SELECT rowid FROM command_fts WHERE command_fts MATCH ?1)
+             ORDER BY id DESC LIMIT 3",
+            &fts_or,
+        );
+        if similar.is_empty() {
+            if let Some(t) = terms.first() {
+                similar = collect(
+                    "SELECT argv_json, exit_code, stderr, cwd, created_at FROM command_runs
+                     WHERE exit_code IS NOT NULL AND exit_code != 0 AND id != ?2
+                       AND (stderr LIKE ?1 OR stdout LIKE ?1)
+                     ORDER BY id DESC LIMIT 3",
+                    &format!("%{t}%"),
+                );
+            }
+        }
+    }
+
+    // Saved lessons matching any term.
+    let mut lessons: Vec<(String, String)> = Vec::new();
+    for t in &terms {
+        if lessons.len() >= 3 {
+            break;
+        }
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT label, created_at FROM bookmarks WHERE label LIKE ?1 ORDER BY id DESC LIMIT 3",
+        ) {
+            if let Ok(rows) =
+                stmt.query_map(params![format!("%{t}%")], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            {
+                for row in rows.flatten() {
+                    if !lessons.iter().any(|(l, _)| l == &row.0) {
+                        lessons.push(row);
+                    }
+                }
+            }
+        }
+    }
+    lessons.truncate(3);
+
+    // When did this exact command last succeed?
+    let last_success: Option<String> = failure.as_ref().and_then(|f| {
+        conn.query_row(
+            "SELECT created_at FROM command_runs
+             WHERE argv_json = ?1 AND exit_code = 0 ORDER BY id DESC LIMIT 1",
+            params![f.1],
+            |r| r.get(0),
+        )
+        .ok()
+    });
+
+    // ── assemble the prompt ──────────────────────────────────────────────
+    let mut p = String::from(
+        "Help me debug a terminal failure. Below is the failing command, its exact\n\
+         output, and relevant history from my local memory (past attempts + lessons).\n\n",
+    );
+    if let Some((_, argv_json, cwd, exit_code, stderr, stdout, notes, created_at)) = &failure {
+        let argv: Vec<String> = serde_json::from_str(argv_json).unwrap_or_default();
+        p.push_str("## The failure (just now)\n");
+        p.push_str(&format!("Command:   {}\n", argv.join(" ")));
+        p.push_str(&format!("Directory: {}\n", cwd.clone().unwrap_or_default()));
+        let tags: Vec<&str> = notes
+            .split_whitespace()
+            .filter(|w| w.contains(':') && !w.starts_with("http"))
+            .collect();
+        if !tags.is_empty() {
+            p.push_str(&format!("Machine:   {}\n", tags.join(" ")));
+        }
+        p.push_str(&format!("Exit code: {}\n", exit_code.unwrap_or(-1)));
+        p.push_str(&format!("When:      {created_at}\n\n"));
+        let err_blob = if stderr.trim().is_empty() { stdout } else { stderr };
+        p.push_str(&format!("```\n{}\n```\n\n", cap_blob(err_blob, 4000)));
+    }
+    if !similar.is_empty() {
+        p.push_str("## I've hit similar errors before\n");
+        for (argv_json, code, stderr, cwd, at) in &similar {
+            let argv: Vec<String> = serde_json::from_str(argv_json).unwrap_or_default();
+            p.push_str(&format!(
+                "- `{}` (exit {}, {}, cwd {})\n  err: {}\n",
+                argv.join(" "),
+                code.unwrap_or(-1),
+                at,
+                cwd.clone().unwrap_or_default(),
+                tail(stderr, 200)
+            ));
+        }
+        p.push('\n');
+    }
+    if !lessons.is_empty() {
+        p.push_str("## Lessons I saved from past fixes\n");
+        for (label, at) in &lessons {
+            p.push_str(&format!("- ({at}): {label}\n"));
+        }
+        p.push('\n');
+    }
+    if let Some(ts) = &last_success {
+        p.push_str("## What I've established\n");
+        p.push_str(&format!("- This exact command last succeeded on {ts}\n\n"));
+    }
+    if include_session {
+        if let Ok((id, transcript)) = conn.query_row(
+            "SELECT id, transcript FROM sessions ORDER BY started_at DESC LIMIT 1",
+            [],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        ) {
+            let lines: Vec<&str> = transcript.lines().collect();
+            let tail_lines = lines.iter().rev().take(60).rev().cloned().collect::<Vec<_>>().join("\n");
+            p.push_str(&format!(
+                "## Tail of my current session (#{id})\n```\n{}\n```\n\n",
+                cap_blob(&tail_lines, 3000)
+            ));
+        }
+    }
+    if !question.is_empty() {
+        p.push_str(&format!("## My question\n{question}\n\n"));
+    }
+    p.push_str(
+        "Please: identify the root cause, tell me if this matches a saved lesson\n\
+         above, and give the exact fix.\n",
+    );
+
+    // ── deliver ──────────────────────────────────────────────────────────
+    let approx_tokens = p.chars().count() / 4;
+    eprintln!(
+        "mw: packaged {}{} similar failure(s), {} saved lesson(s){}",
+        if failure.is_some() { "the last failure, " } else { "" },
+        similar.len(),
+        lessons.len(),
+        if include_session { ", + session tail" } else { "" }
+    );
+    if copy_to_clipboard(&p) {
+        eprintln!("mw: ~{approx_tokens} tokens copied to clipboard — paste into ChatGPT/Claude (Cmd-V)");
+        if !no_open {
+            eprintln!("mw: opening https://chatgpt.com …");
+            open_url("https://chatgpt.com");
+        }
+    } else {
+        eprintln!("mw: no clipboard tool found (pbcopy/xclip/wl-copy) — printing instead:\n");
+        println!("{p}");
+    }
     Ok(())
 }
 

@@ -66,6 +66,11 @@ mw \- record whole terminal sessions into local MemoryWhale storage
 .B mw agent
 .RI [ session-id ]
 .br
+.B mw ask
+.RI [ question ]
+.RB [ --session ]
+.RB [ --no-open ]
+.br
 .B mw doctor
 .br
 .B mw global
@@ -185,6 +190,17 @@ suitable for pasting into an AI agent.
 Export a full session transcript (plus recent failures) as Markdown on stdout,
 to hand to an AI agent later. Defaults to the most recent session. Redirect or
 pipe it, e.g.\& \fBmw agent > session.md\fR or \fBmw agent | pbcopy\fR.
+.TP
+.BI "mw ask " "[question] " "[--session] [--no-open]"
+Package the most recent failure \(em exact error, similar past failures,
+saved lessons \(em into one debugging prompt, copy it to the clipboard, and open
+chatgpt.com. Paste into whatever chat you already pay for (ChatGPT, Claude,
+Gemini); no API key needed.
+.B --session
+appends the tail of the current session;
+.B --no-open
+skips launching the browser. Prints the payload instead if no clipboard tool
+(pbcopy/xclip/wl-copy) is available.
 .TP
 .B mw doctor
 Check the install: data directory, database, the

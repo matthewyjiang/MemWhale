@@ -27,6 +27,7 @@ _mw() {
     'pull:copy another machine'\''s memory here and merge it'
     'context:print a compact digest for an AI agent'
     'agent:export a session as text to paste into an agent'
+    'ask:package the last failure for ChatGPT/Claude (clipboard)'
     'doctor:check the install'
     'global:auto-record every new terminal (on/off/status)'
   )
@@ -63,6 +64,11 @@ _mw() {
       _arguments \
         '--last-error[only the most recent failure]' \
         '--limit[max results]:count:'
+      ;;
+    ask)
+      _arguments \
+        '--session[append the tail of the current session]' \
+        '--no-open[do not open the browser]'
       ;;
   esac
 }
