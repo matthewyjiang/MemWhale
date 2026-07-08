@@ -7,3 +7,7 @@ src-tauri/gen/
 
 # Local Claude Code / agent config
 .claude/
+
+# Python bytecode
+__pycache__/
+*.pyc

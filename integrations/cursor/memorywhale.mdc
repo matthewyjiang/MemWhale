@@ -1,0 +1,42 @@
+---
+description: Query and write durable debugging memory recorded by MemoryWhale. Use when a build/test/deploy is failing and might have failed before, when you need the exact error/flags/output from an earlier attempt, when the user asks "how did we fix this last time?", or once you've figured out why something failed / how a fix worked and it's worth remembering. Works across sessions and machines.
+globs:
+alwaysApply: false
+---
+
+# MemoryWhale memory
+
+MemoryWhale records terminal commands, their arguments, exit codes, output, and
+errors into a local SQLite database — the record of what was already tried,
+surviving crashes, SSH drops, and switching machines. It also holds freeform
+lessons a human or a past agent chose to remember.
+
+You reach it through the `memorywhale` MCP server (tools: `recent_errors`,
+`search_memory`, `get_context`, `remember`). If the MCP server isn't connected,
+shell out to the `mw` CLI instead.
+
+## When to READ from it
+
+- A build/test/deploy is failing and it might have failed before.
+- You need the *exact* earlier error text, flags, or working directory — not a
+  paraphrase.
+- The user references past work ("last week", "on the Jetson", "how did I fix").
+
+Before proposing a fix for a failure, check whether it already has a known
+cause: call `search_memory` / `recent_errors` (or `mw context --last-error` /
+`mw search "<error text>"`). If a remembered lesson matches, say so and apply
+it rather than re-deriving from scratch.
+
+## When to WRITE to it
+
+Once you've figured out *why* something failed or *how* a fix worked — not just
+that it's fixed — save it with the `remember` tool (or `mw remember "<text>"`).
+Keep it a self-contained conclusion: what was wrong + what fixed it, e.g.
+"the E0308 in camera-driver was the fps field being a string; fix: parse as i32".
+That's the part a raw command log doesn't capture, and it's what saves the next
+session from re-deriving the same thing.
+
+## Note
+
+Captured output is secret-redacted on the way in, but treat it as real project
+data. Everything is local — nothing is uploaded.

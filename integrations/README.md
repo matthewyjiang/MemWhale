@@ -20,7 +20,11 @@ Claude Code:
 claude mcp add memorywhale -- mw-mcp
 ```
 
-Codex / Cursor / other MCP clients: add a stdio server whose command is `mw-mcp`
+**Cursor:** copy [`cursor/mcp.json`](cursor/mcp.json) to `.cursor/mcp.json`, and
+[`cursor/memorywhale.mdc`](cursor/memorywhale.mdc) to `.cursor/rules/` for the
+"when to use it" rule — see [`cursor/README.md`](cursor/README.md).
+
+**Codex / other MCP clients:** add a stdio server whose command is `mw-mcp`
 (no arguments). It honours `MEMORYWHALE_DATA_DIR` like the rest of the CLI.
 
 Quick check that it responds:
