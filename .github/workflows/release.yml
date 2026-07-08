@@ -78,6 +78,30 @@ jobs:
             ${{ steps.package.outputs.asset }}
             *.deb
 
+  # Update Formula/memorywhale.rb on main to point at the new tag, so
+  # `brew install` never lags a release. Last manual release chore, automated.
+  bump-formula:
+    name: Bump Homebrew formula
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: Point formula at ${{ github.ref_name }}
+        run: |
+          url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+          sha=$(curl -fsSL "$url" | shasum -a 256 | cut -d' ' -f1)
+          sed -i -E "s|^(  url )\".*\"|\1\"$url\"|; s|^(  sha256 )\".*\"|\1\"$sha\"|" Formula/memorywhale.rb
+          if git diff --quiet; then
+            echo "formula already points at ${GITHUB_REF_NAME} — nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "Set Homebrew formula to ${GITHUB_REF_NAME}"
+          git push origin main
+
   # Publish the CLI crate to crates.io once per release. Runs once (not in the
   # matrix above). Skips gracefully if the token secret isn't set or the version
   # is already published, so it never turns a release red for those reasons.

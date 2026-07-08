@@ -4,8 +4,8 @@
 #   brew tap wuisabel-gif/memorywhale https://github.com/wuisabel-gif/MemWhale
 #   brew install memorywhale
 #
-# Maintainer note: after tagging a release, set `version`/`url` to the tag and
-# fill `sha256` with:  curl -fsSL <url> | shasum -a 256
+# Maintainer note: `url`/`sha256` are updated automatically by the
+# bump-formula job in .github/workflows/release.yml on every tagged release.
 class Memorywhale < Formula
   desc "Local-first terminal memory: record commands, sessions, and output into SQLite"
   homepage "https://github.com/wuisabel-gif/MemWhale"
