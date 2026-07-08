@@ -1,0 +1,9 @@
+# Add this block to ~/.codex/config.toml to give OpenAI Codex CLI access to
+# MemoryWhale's memory via MCP (tools: recent_errors, search_memory,
+# get_context, remember).
+#
+# `mw-mcp` must be on PATH (the standard MemoryWhale install). For a non-default
+# database, add:  env = { MEMORYWHALE_DATA_DIR = "/path/to/dir" }
+
+[mcp_servers.memorywhale]
+command = "mw-mcp"

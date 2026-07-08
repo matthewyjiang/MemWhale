@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "memorywhale": {
+      "type": "stdio",
+      "command": "mw-mcp"
+    }
+  }
+}

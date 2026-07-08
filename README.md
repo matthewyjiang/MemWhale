@@ -58,6 +58,11 @@ Debian/Ubuntu/Jetson: grab the `.deb` from the
 [releases page](https://github.com/wuisabel-gif/MemWhale/releases) and
 `sudo apt install ./memorywhale_*.deb`.
 
+**Windows:** run it inside [WSL](https://learn.microsoft.com/windows/wsl/) —
+MemoryWhale is a Linux binary there, so the one-line install above works as-is
+from your WSL shell. (A native Windows build isn't available yet; the session
+recorder relies on Unix `script`.)
+
 First run: type `mw` — it explains itself and offers to auto-record every new
 terminal. That's the whole setup.
 

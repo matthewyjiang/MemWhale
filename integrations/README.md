@@ -20,12 +20,16 @@ Claude Code:
 claude mcp add memorywhale -- mw-mcp
 ```
 
-**Cursor:** copy [`cursor/mcp.json`](cursor/mcp.json) to `.cursor/mcp.json`, and
-[`cursor/memorywhale.mdc`](cursor/memorywhale.mdc) to `.cursor/rules/` for the
-"when to use it" rule — see [`cursor/README.md`](cursor/README.md).
+The same `mw-mcp` server plugs into every MCP-speaking client — only the config
+file differs. Per-client setup (config + a "when to use it" rule):
 
-**Codex / other MCP clients:** add a stdio server whose command is `mw-mcp`
-(no arguments). It honours `MEMORYWHALE_DATA_DIR` like the rest of the CLI.
+- **Cursor** → [`cursor/`](cursor/README.md)
+- **VS Code / GitHub Copilot** (agent mode) → [`vscode/`](vscode/README.md)
+- **Windsurf** → [`windsurf/`](windsurf/README.md)
+- **Codex CLI** → [`codex/`](codex/README.md)
+- **Any other MCP client** (Zed, Cline, Continue, …) — add a stdio server whose
+  command is `mw-mcp` (no arguments). It honours `MEMORYWHALE_DATA_DIR` like the
+  rest of the CLI.
 
 Quick check that it responds:
 
