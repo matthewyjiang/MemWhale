@@ -355,7 +355,6 @@ fn dashboard(query: &str) -> String {
             )
         }
     };
-    let _ = init_min_schema(&conn);
 
     let mut body =
         String::from("<div class=\"eyebrow\">MemoryWhale</div>\n<h1>Terminal memory</h1>\n");
@@ -939,7 +938,6 @@ fn project_page(raw_name: &str) -> String {
         Ok(c) => c,
         Err(e) => return page("Project", &format!("<p>{}</p>", esc(&e))),
     };
-    let _ = init_min_schema(&conn);
 
     let mut items: Vec<(String, String)> = Vec::new(); // (timestamp, row html)
 
@@ -1032,7 +1030,6 @@ fn repo_page(raw_name: &str) -> String {
         Ok(c) => c,
         Err(e) => return page("Repo", &format!("<p>{}</p>", esc(&e))),
     };
-    let _ = init_min_schema(&conn);
     let roots = discovered_repo_roots(&conn);
 
     let mut items: Vec<(String, String)> = Vec::new(); // (timestamp, row html)
@@ -1372,7 +1369,6 @@ struct Graph {
 /// commands are marked as bridges. One node per command (not per run).
 fn graph_json() -> Result<String, String> {
     let conn = open_db()?;
-    let _ = init_min_schema(&conn);
 
     let mut run_cmd: HashMap<i64, String> = HashMap::new();
     let mut cmd_count: HashMap<String, i64> = HashMap::new();
@@ -1487,7 +1483,6 @@ fn runs_page(raw: &str) -> String {
         Ok(c) => c,
         Err(e) => return page("Runs", &format!("<p>{}</p>", esc(&e))),
     };
-    let _ = init_min_schema(&conn);
 
     let mut body = String::from("<a class=\"back\" href=\"/graph\">← graph</a>\n");
     body.push_str(&format!(
@@ -1779,27 +1774,6 @@ fn session_debug_summary(transcript: &str, notes: &str) -> String {
     )
 }
 
-fn init_min_schema(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS command_runs (id INTEGER PRIMARY KEY, command TEXT NOT NULL,
-            argv_json TEXT NOT NULL, cwd TEXT, exit_code INTEGER, stdout TEXT NOT NULL DEFAULT '',
-            stderr TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
-         CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY, shell TEXT, cwd TEXT,
-            transcript_path TEXT NOT NULL DEFAULT '', transcript TEXT NOT NULL DEFAULT '',
-            notes TEXT NOT NULL DEFAULT '', started_at TEXT NOT NULL DEFAULT '',
-            ended_at TEXT NOT NULL DEFAULT '', byte_count INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'finished');
-         CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY, label TEXT NOT NULL,
-            cwd TEXT, created_at TEXT NOT NULL, command_run_id INTEGER, session_id INTEGER);",
-    )
-    .map_err(|e| format!("init schema: {e}"))?;
-    let _ = conn.execute(
-        "ALTER TABLE sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'finished'",
-        [],
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1846,7 +1820,6 @@ fn recover_orphans() -> Result<RecoveryReport, String> {
         });
     }
     let conn = open_db()?;
-    init_min_schema(&conn)?;
 
     let mut entries: Vec<PathBuf> = fs::read_dir(&sessions_dir)
         .map_err(|e| format!("read sessions dir: {e}"))?
@@ -1943,7 +1916,7 @@ fn open_db() -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create data dir: {e}"))?;
     }
-    Connection::open(&path).map_err(|e| format!("open db {}: {e}", path.display()))
+    memorywhale_cli::storage::open_path(&path)
 }
 
 fn database_path() -> Result<PathBuf, String> {
