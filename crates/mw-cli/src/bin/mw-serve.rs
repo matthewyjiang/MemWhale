@@ -266,7 +266,7 @@ fn handle(mut stream: TcpStream) {
             );
             let response = format!(
                 "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.as_bytes().len()
+                body.len()
             );
             let _ = stream.write_all(response.as_bytes());
             let _ = stream.write_all(body.as_bytes());
@@ -281,7 +281,7 @@ fn handle(mut stream: TcpStream) {
         .collect();
     let response = format!(
         "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n{cookie_header}Connection: close\r\n\r\n",
-        body.as_bytes().len()
+        body.len()
     );
     let _ = stream.write_all(response.as_bytes());
     let _ = stream.write_all(body.as_bytes());
@@ -608,8 +608,7 @@ fn project_of(notes: &str) -> Option<String> {
     re.captures(notes).map(|c| c[1].to_string())
 }
 
-/// Count how many command runs + sessions belong to each project tag.
-
+// Count how many command runs + sessions belong to each project tag.
 fn search_results(conn: &Connection, query: &str) -> String {
     let needle = format!("%{}%", query.trim());
     let mut out = String::new();
@@ -727,7 +726,7 @@ enum DisplayTz {
 }
 
 thread_local! {
-    static DISPLAY_TZ: std::cell::Cell<DisplayTz> = std::cell::Cell::new(DisplayTz::Local);
+    static DISPLAY_TZ: std::cell::Cell<DisplayTz> = const { std::cell::Cell::new(DisplayTz::Local) };
 }
 
 fn set_display_tz(tz: DisplayTz) {
@@ -883,7 +882,7 @@ fn session_row(
     status: &str,
 ) -> String {
     let badge_class = match status {
-        "recording" if session_age_seconds(ended_at).map_or(false, |age| age <= 30) => "live",
+        "recording" if session_age_seconds(ended_at).is_some_and(|age| age <= 30) => "live",
         "recording" | "interrupted" => "warn",
         _ => "sess",
     };
@@ -1688,37 +1687,6 @@ fn session_debug_summary(transcript: &str, notes: &str) -> String {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dashboard_defaults_to_loopback() {
-        let config = parse_server_args(Vec::<String>::new()).unwrap();
-        assert_eq!(config.host, "127.0.0.1");
-        assert_eq!(config.port, 7071);
-        assert!(validate_server_config(&config).is_ok());
-    }
-
-    #[test]
-    fn lan_requires_authentication() {
-        let mut config = parse_server_args(["--lan".to_string()]).unwrap();
-        config.token.clear();
-        assert!(validate_server_config(&config).is_err());
-        config.token = "shared-secret".to_string();
-        assert!(validate_server_config(&config).is_ok());
-    }
-
-    #[test]
-    fn token_is_read_from_form_body_not_query_string() {
-        assert_eq!(
-            form_param("token=shared%20secret", "token").as_deref(),
-            Some("shared secret")
-        );
-        assert!(form_param("other=value", "token").is_none());
-    }
-}
-
 /// Import every session `.log` that has no row yet (interrupted recordings).
 struct RecoveryReport {
     recovered: usize,
@@ -1848,4 +1816,35 @@ fn memorywhale_dir() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(path));
     }
     Ok(data_base()?.join("MemoryWhale"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dashboard_defaults_to_loopback() {
+        let config = parse_server_args(Vec::<String>::new()).unwrap();
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 7071);
+        assert!(validate_server_config(&config).is_ok());
+    }
+
+    #[test]
+    fn lan_requires_authentication() {
+        let mut config = parse_server_args(["--lan".to_string()]).unwrap();
+        config.token.clear();
+        assert!(validate_server_config(&config).is_err());
+        config.token = "shared-secret".to_string();
+        assert!(validate_server_config(&config).is_ok());
+    }
+
+    #[test]
+    fn token_is_read_from_form_body_not_query_string() {
+        assert_eq!(
+            form_param("token=shared%20secret", "token").as_deref(),
+            Some("shared secret")
+        );
+        assert!(form_param("other=value", "token").is_none());
+    }
 }
