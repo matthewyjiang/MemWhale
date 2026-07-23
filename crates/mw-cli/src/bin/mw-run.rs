@@ -180,10 +180,11 @@ fn remember_command(
     }
 
     let conn = memorywhale_cli::storage::open_path(&db_path)?;
+    memorywhale_cli::restrict_path_permissions(&db_path, false)?;
     // Fingerprint failures only — a stable key that groups this error with prior
     // occurrences, so `mw context --last-error` can show its history. Computed
     // from the redacted stderr (what we store), so it matches the backfill path.
-    let redacted_stderr = memorywhale_cli::redact(stderr);
+    let redacted_stderr = memorywhale_cli::sanitize_capture(stderr);
     let fingerprint = match exit_code {
         Some(0) | None => None,
         Some(_) => memorywhale_cli::error_fingerprint(&command, &redacted_stderr),
@@ -198,9 +199,9 @@ fn remember_command(
             argv_json,
             cwd.to_string_lossy(),
             exit_code,
-            memorywhale_cli::redact(stdout),
+            memorywhale_cli::sanitize_capture(stdout),
             redacted_stderr,
-            memorywhale_cli::redact(notes),
+            memorywhale_cli::sanitize_capture(notes),
             created_at,
             fingerprint
         ],
