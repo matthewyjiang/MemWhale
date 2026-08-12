@@ -52,12 +52,15 @@ mw context --last-error
 
 `mw-mcp` exposes six tools over newline-delimited JSON-RPC 2.0 on stdio:
 
-- `recent_errors`
-- `search_memory`
-- `get_context`
-- `remember`
-- `similar_failures`
-- `stats`
+- **Cursor** → [`cursor/`](cursor/README.md)
+- **VS Code / GitHub Copilot** (agent mode) → [`vscode/`](vscode/README.md)
+- **Windsurf** → [`windsurf/`](windsurf/README.md)
+- **Zed** → [`zed/`](zed/README.md)
+- **Codex CLI** → [`codex/`](codex/README.md)
+- **OpenClaw** → [`openclaw/`](openclaw/README.md)
+- **Any other MCP client** (Cline, Continue, …) — add a stdio server whose
+  command is `mw-mcp` (no arguments). It honours `MEMORYWHALE_DATA_DIR` like the
+  rest of the CLI.
 
 The [MCP reference](../docs/reference/mcp.md) is authoritative for parameters
 and responses. A transport-level check is:
