@@ -343,7 +343,7 @@ fn handle(mut stream: TcpStream) {
                 return;
             }
             saw_content_length = true;
-            content_length = match header_value.trim().parse::<usize>() {
+            content_length = match parse_content_length(header_value.trim()) {
                 Ok(n) if n <= MAX_BODY_BYTES => n,
                 Err(_) => {
                     let _ = write_error(&stream, "400 Bad Request");
@@ -380,6 +380,18 @@ fn handle(mut stream: TcpStream) {
     let loopback_bind = *LOOPBACK_BIND.get().unwrap_or(&true);
     if !host_header_allowed(&host_header, loopback_bind) {
         let _ = write_error(&stream, "403 Forbidden");
+        return;
+    }
+
+    let method_allowed = method == "GET" || (method == "POST" && raw_path == "/login");
+    if !method_allowed {
+        let allow = if raw_path == "/login" {
+            "GET, POST"
+        } else {
+            "GET"
+        };
+        let response = response("405 Method Not Allowed", "", &format!("Allow: {allow}\r\n"));
+        let _ = stream.write_all(response.as_bytes());
         return;
     }
 
@@ -468,7 +480,12 @@ enum LineError {
 impl LineError {
     fn status(&self) -> &'static str {
         match self {
-            Self::Io(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            Self::Io(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
                 "408 Request Timeout"
             }
             Self::TooLong => "431 Request Header Fields Too Large",
@@ -516,6 +533,13 @@ fn parse_request_line(line: &str) -> Result<(String, String), ()> {
         return Err(());
     }
     Ok((method.to_string(), path.to_string()))
+}
+
+fn parse_content_length(value: &str) -> Result<usize, ()> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(());
+    }
+    value.parse::<usize>().map_err(|_| ())
 }
 
 fn form_param(body: &str, key: &str) -> Option<String> {
@@ -1038,15 +1062,17 @@ fn parse_tz(s: &str) -> DisplayTz {
     let rest = &s[1..];
     let (h, m) = if let Some((h, m)) = rest.split_once(':') {
         (h.parse::<i32>().ok(), m.parse::<i32>().ok())
-    } else if rest.len() == 4 {
+    } else if rest.len() == 4 && rest.is_ascii() {
         (rest[..2].parse().ok(), rest[2..].parse().ok())
     } else {
         (rest.parse::<i32>().ok(), Some(0))
     };
     match (h, m) {
-        (Some(h), Some(m)) => FixedOffset::east_opt(sign * (h * 3600 + m * 60))
-            .map(DisplayTz::Fixed)
-            .unwrap_or(DisplayTz::Local),
+        (Some(h), Some(m)) if (0..24).contains(&h) && (0..60).contains(&m) => {
+            FixedOffset::east_opt(sign * (h * 3600 + m * 60))
+                .map(DisplayTz::Fixed)
+                .unwrap_or(DisplayTz::Local)
+        }
         _ => DisplayTz::Local,
     }
 }
@@ -1751,8 +1777,8 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(b);
+            if let (Some(high), Some(low)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+                out.push((high << 4) | low);
                 i += 3;
                 continue;
             }
@@ -1761,6 +1787,15 @@ fn percent_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn query_param(raw_path: &str, key: &str) -> Option<String> {
@@ -2206,6 +2241,26 @@ mod tests {
         response
     }
 
+    fn raw_response_with_server_timeout(request: &[u8], timeout: Duration) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(timeout)).unwrap();
+            stream.set_write_timeout(Some(timeout)).unwrap();
+            handle(stream);
+        });
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client.write_all(request).unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        worker.join().unwrap();
+        response
+    }
+
     #[test]
     fn parser_returns_bounded_errors_for_hostile_requests() {
         let malformed = raw_response(b"GET /\r\n\r\n");
@@ -2225,6 +2280,54 @@ mod tests {
             MAX_BODY_BYTES + 1
         );
         assert!(raw_response(too_large.as_bytes()).starts_with("HTTP/1.1 413 Payload Too Large"));
+    }
+
+    #[test]
+    fn parser_rejects_header_ambiguity_and_missing_loopback_host() {
+        let missing_host = raw_response(b"GET / HTTP/1.1\r\n\r\n");
+        assert!(missing_host.starts_with("HTTP/1.1 403 Forbidden"));
+
+        let duplicate_length = raw_response(
+            b"GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n",
+        );
+        assert!(duplicate_length.starts_with("HTTP/1.1 400 Bad Request"));
+
+        let invalid_length =
+            raw_response(b"GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: +1\r\n\r\n");
+        assert!(invalid_length.starts_with("HTTP/1.1 400 Bad Request"));
+
+        let too_many_headers = format!(
+            "GET / HTTP/1.1\r\nHost: localhost\r\n{}\r\n",
+            (0..=MAX_HEADER_COUNT)
+                .map(|i| format!("X-{i}: value\r\n"))
+                .collect::<String>()
+        );
+        assert!(raw_response(too_many_headers.as_bytes()).starts_with("HTTP/1.1 431 "));
+    }
+
+    #[test]
+    fn parser_rejects_unsupported_methods_and_malformed_lengths() {
+        let method = raw_response(b"PUT / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assert!(method.starts_with("HTTP/1.1 405 Method Not Allowed"));
+        assert!(method.contains("Allow: GET\r\n"));
+        let login_method = raw_response(b"PUT /login HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        assert!(login_method.contains("Allow: GET, POST\r\n"));
+        for value in ["+1", "1.0", "0x10", "-1", ""] {
+            assert!(parse_content_length(value).is_err(), "accepted {value:?}");
+        }
+        assert_eq!(parse_content_length("00012"), Ok(12));
+    }
+
+    #[test]
+    fn incomplete_client_gets_bounded_timeout_response() {
+        let response = raw_response_with_server_timeout(
+            b"GET / HTTP/1.1\r\nHost: localhost\r\n",
+            Duration::from_millis(50),
+        );
+        assert!(
+            response.starts_with("HTTP/1.1 408 Request Timeout"),
+            "unexpected timeout response: {response:?}"
+        );
     }
 
     #[test]
@@ -2260,6 +2363,56 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c, "mw_tz=utc; Path=/; SameSite=Strict; Max-Age=31536000");
+    }
+
+    #[test]
+    fn timezone_parser_rejects_malformed_and_accepts_supported_offsets() {
+        assert!(matches!(parse_tz(""), DisplayTz::Local));
+        assert!(matches!(parse_tz("LOCAL"), DisplayTz::Local));
+        assert!(matches!(parse_tz("utc"), DisplayTz::Fixed(_)));
+        assert!(matches!(parse_tz("-08:00"), DisplayTz::Fixed(_)));
+        assert!(matches!(parse_tz("+0530"), DisplayTz::Fixed(_)));
+        assert!(matches!(parse_tz("+5"), DisplayTz::Fixed(_)));
+        assert!(matches!(parse_tz("+99:99"), DisplayTz::Local));
+        assert!(matches!(parse_tz("5"), DisplayTz::Local));
+        assert!(matches!(parse_tz("+01:60"), DisplayTz::Local));
+        assert!(matches!(parse_tz("+💥"), DisplayTz::Local));
+        assert!(matches!(parse_tz("+01:00\r\nX"), DisplayTz::Local));
+    }
+
+    #[test]
+    fn query_and_route_decoding_does_not_turn_encoded_input_into_html() {
+        assert_eq!(percent_decode("a%2Fb+two"), "a/b+two");
+        assert_eq!(
+            query_param("/?q=a%3Cscript%3E%26b", "q").as_deref(),
+            Some("a<script>&b")
+        );
+        assert_eq!(query_param("/?q=one+two", "q").as_deref(), Some("one two"));
+        assert_eq!(route("/not-a-real-route").0, "404 Not Found");
+
+        let rendered = page(
+            "</script><script>alert(1)</script>",
+            &code_block("<img src=x onerror=alert(1)>"),
+        );
+        assert!(!rendered.contains("<script>alert(1)</script>"));
+        assert!(rendered.contains("&lt;img src=x onerror=alert(1)&gt;"));
+        assert!(!esc_redacted("password: hunter2secret").contains("hunter2secret"));
+    }
+
+    #[test]
+    fn response_framing_matches_body_and_has_no_injection() {
+        let response = raw_response(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        let header_end = response.find("\r\n\r\n").unwrap();
+        let (headers, payload) = response.split_at(header_end + 4);
+        assert!(headers.contains(&format!("Content-Length: {}", payload.len())));
+        assert!(!payload.is_empty());
+        assert!(headers.ends_with("\r\n\r\n"));
+        assert!(!response.contains("\r\nX-Injected:"));
+    }
+
+    #[test]
+    fn percent_decode_rejects_malformed_utf8_sequences_without_panicking() {
+        assert_eq!(percent_decode("%💥"), "%💥");
     }
 
     #[test]
