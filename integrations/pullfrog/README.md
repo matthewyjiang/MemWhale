@@ -191,6 +191,46 @@ For a review-only Pullfrog run, configure review instructions such as:
 
 This prompt does not grant Pullfrog access to MemoryWhale's local database.
 
+## Pullfrog event archive
+
+The repository also contains `.github/workflows/pullfrog-memory.yml`. After a
+workflow named `Pullfrog` completes, it records an allowlisted metadata summary
+in a temporary MemoryWhale store and uploads a 14-day GitHub Actions artifact.
+The captured event summary is limited to repository, workflow/run ID and URL,
+event, status/conclusion, branch, commit SHA, actor, and a PR number only when
+Pullfrog's workflow event explicitly provides one. The MemoryWhale command record also necessarily contains
+the fixed command identifier and run ID in argv, the temporary runner cwd,
+exit code, creation timestamp, and automatic `os:`/`runtime:` capture tags.
+
+It deliberately does **not** capture Pullfrog prompts, review bodies, comments,
+diffs, logs, environment variables, or credentials. The workflow checks out the
+trusted default branch rather than executing code from the completed PR.
+
+To bring an artifact into a local MemoryWhale store:
+
+1. Download and extract the `pullfrog-memory-<run-id>` artifact from GitHub.
+2. Import the extracted bundle directory:
+
+   ```bash
+   mw import /path/to/downloaded/project-pullfrog-*
+   ```
+
+3. Search the imported event:
+
+   ```bash
+   mw search "project:pullfrog"
+   ```
+
+The workflow-run event often has no direct PR association because Pullfrog
+dispatches its workflow on the default branch. In that case the PR field stays
+empty rather than guessing from a default-branch commit; the run URL and commit
+SHA are the authoritative links.
+
+Artifacts are snapshots, not synchronization. They do not automatically update
+the developer's local SQLite database, and each artifact has a 14-day retention
+period. Review GitHub artifact access and retention policies before treating the
+archive as long-term history.
+
 ## Automatic capture
 
 Pullfrog does not automatically capture local MemoryWhale terminal sessions.
