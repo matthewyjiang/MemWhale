@@ -803,6 +803,9 @@ const INTEGRATIONS: &[(&str, &str, &str)] = &[
     ("VS Code / Copilot", "vscode", "MCP"),
     ("Windsurf", "windsurf", "MCP"),
     ("Zed", "zed", "MCP"),
+    ("Pullfrog", "pullfrog", "PR workflow"),
+    ("CLIProxyAPI", "cliproxyapi", "model proxy"),
+    ("OpenRouter", "openrouter", "model gateway"),
     ("Neovim plugin", "neovim", "CLI"),
     ("Any stdio MCP client", "generic-mcp", "MCP"),
 ];
@@ -827,7 +830,7 @@ fn integrations_section() -> String {
         ));
     }
     format!(
-        "<h2>Integrations</h2>\n<p class=\"sub\">MemoryWhale plugs into these coding agents and editors — \
+        "<h2>Integrations</h2>\n<p class=\"sub\">MemoryWhale works alongside these coding agents, editors, and model-routing tools — \
 each cell links to its setup guide in the repository.</p>\n<div class=\"igrid\">\n{cells}</div>\n"
     )
 }
@@ -2492,7 +2495,7 @@ mod tests {
     #[test]
     fn integrations_section_has_a_guide_link_for_every_client() {
         let html = integrations_section();
-        assert_eq!(INTEGRATIONS.len(), 21);
+        assert_eq!(INTEGRATIONS.len(), 24);
         for (name, slug, badge) in INTEGRATIONS {
             assert!(html.contains(&format!(
                 "href=\"https://github.com/wuisabel-gif/MemWhale/tree/main/integrations/{slug}\""
