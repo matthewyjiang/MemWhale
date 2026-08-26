@@ -8,8 +8,8 @@
 //! change.
 
 use std::collections::HashMap;
-#[cfg(feature = "embeddings")]
-use std::sync::Arc;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use rusqlite::Connection;
 
@@ -18,8 +18,8 @@ use crate::embed::Embedder;
 use crate::scorer::score_with_lexical;
 use crate::{Memory, Query, ScoredMemory, Weights};
 
-/// Build an in-memory SQLite FTS5 index over `memories`, MATCH `query`, and
-/// return a per-id keyword relevance in `[0,1]` derived from SQLite's `bm25` rank.
+/// Query an in-memory SQLite FTS5 index and return a per-id keyword relevance
+/// in `[0,1]` derived from SQLite's `bm25` rank.
 ///
 /// The index has two columns — `text` (the memory body) and `tags` (its tags,
 /// space-joined). Tags are explicit user/agent signal, so a query term that only
@@ -50,27 +50,14 @@ fn bm25_similarities(memories: &[Memory], query: &str) -> HashMap<i64, f32> {
     if match_expr.is_empty() {
         return out;
     }
-    let conn = match Connection::open_in_memory() {
-        Ok(c) => c,
-        Err(_) => return out,
-    };
-    if conn
-        .execute("CREATE VIRTUAL TABLE mem_fts USING fts5(text, tags)", [])
-        .is_err()
-    {
+    let fingerprint = corpus_fingerprint(memories);
+    let Some(cached) = cached_fts_cache(memories, fingerprint) else {
         return out;
-    }
-    {
-        let mut ins =
-            match conn.prepare("INSERT INTO mem_fts(rowid, text, tags) VALUES (?1, ?2, ?3)") {
-                Ok(s) => s,
-                Err(_) => return out,
-            };
-        // Insert in corpus order → deterministic bm25.
-        for m in memories {
-            let _ = ins.execute(rusqlite::params![m.id, m.text, m.tags.join(" ")]);
-        }
-    }
+    };
+    let conn = cached
+        .conn
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut stmt = match conn
         .prepare("SELECT rowid, bm25(mem_fts, 1.0, 1.0) FROM mem_fts WHERE mem_fts MATCH ?1")
     {
@@ -87,6 +74,115 @@ fn bm25_similarities(memories: &[Memory], query: &str) -> HashMap<i64, f32> {
         }
     }
     out
+}
+
+struct FtsCache {
+    conn: Mutex<Connection>,
+}
+
+struct FtsEntry {
+    index: OnceLock<Option<Arc<FtsCache>>>,
+}
+
+const MAX_CACHED_CORPORA: usize = 8;
+
+struct FtsCacheStore {
+    entries: Mutex<HashMap<u64, Arc<FtsEntry>>>,
+    wake: Condvar,
+}
+
+impl FtsCacheStore {
+    fn new() -> Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+            wake: Condvar::new(),
+        }
+    }
+
+    fn reserve(&self, fingerprint: u64) -> Arc<FtsEntry> {
+        loop {
+            let mut entries = self
+                .entries
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(entry) = entries.get(&fingerprint) {
+                return Arc::clone(entry);
+            }
+            if entries.len() >= MAX_CACHED_CORPORA {
+                if let Some(evict) = entries
+                    .iter()
+                    .find_map(|(key, entry)| entry.index.get().map(|_| *key))
+                {
+                    entries.remove(&evict);
+                    continue;
+                }
+                drop(self.wake.wait(entries));
+                continue;
+            }
+            let entry = Arc::new(FtsEntry {
+                index: OnceLock::new(),
+            });
+            entries.insert(fingerprint, Arc::clone(&entry));
+            return entry;
+        }
+    }
+
+    fn notify(&self) {
+        let _entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.wake.notify_all();
+    }
+}
+
+fn corpus_fingerprint(memories: &[Memory]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for memory in memories {
+        memory.id.hash(&mut hasher);
+        memory.text.hash(&mut hasher);
+        memory.tags.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn build_fts_cache(memories: &[Memory]) -> Option<FtsCache> {
+    let conn = Connection::open_in_memory().ok()?;
+    conn.execute("CREATE VIRTUAL TABLE mem_fts USING fts5(text, tags)", [])
+        .ok()?;
+    let mut ins = conn
+        .prepare("INSERT INTO mem_fts(rowid, text, tags) VALUES (?1, ?2, ?3)")
+        .ok()?;
+    // Insert in corpus order → deterministic bm25.
+    for memory in memories {
+        ins.execute(rusqlite::params![
+            memory.id,
+            memory.text,
+            memory.tags.join(" ")
+        ])
+        .ok()?;
+    }
+    drop(ins);
+    Some(FtsCache {
+        conn: Mutex::new(conn),
+    })
+}
+
+/// Reuse a bounded set of corpus indexes across engine instances and requests.
+/// Each corpus gets its own connection mutex, so a query for one project does
+/// not hold the global cache lock or evict another project's index immediately.
+fn cached_fts_cache(memories: &[Memory], fingerprint: u64) -> Option<Arc<FtsCache>> {
+    static FTS_CACHE: OnceLock<FtsCacheStore> = OnceLock::new();
+
+    let store = FTS_CACHE.get_or_init(FtsCacheStore::new);
+    let entry = store.reserve(fingerprint);
+
+    let result = entry
+        .index
+        .get_or_init(|| build_fts_cache(memories).map(Arc::new))
+        .clone();
+    store.notify();
+    result
 }
 
 /// The tokens the FTS index sees: lowercase alphanumeric tokens (len ≥ 2).
@@ -627,6 +723,110 @@ mod tests {
             sim_n.score
         );
         assert!(sim_m.score > sim_n.score);
+    }
+
+    #[test]
+    fn fts_cache_refreshes_when_public_corpus_changes() {
+        let mut engine = BuiltinEngine::new(vec![Memory {
+            id: 1,
+            text: "ordinary text".to_string(),
+            created_at: now(),
+            last_used: now(),
+            mentions: 0,
+            importance: 0.5,
+            tags: vec![],
+            embedding: None,
+        }]);
+        let query = Query::new("cache-invalidation-token", now());
+        let before = engine.explain(1, &query).unwrap();
+        let before_similarity = before
+            .signals
+            .iter()
+            .find(|signal| signal.name == "similarity")
+            .unwrap()
+            .score;
+
+        // `memories` is public for compatibility; fingerprinting must detect
+        // this mutation and rebuild the cached FTS rows before the next query.
+        engine.memories[0].text = "cache-invalidation-token appears here".to_string();
+        let after = engine.explain(1, &query).unwrap();
+        let after_similarity = after
+            .signals
+            .iter()
+            .find(|signal| signal.name == "similarity")
+            .unwrap()
+            .score;
+
+        assert_eq!(before_similarity, 0.0);
+        assert!(after_similarity > before_similarity);
+    }
+
+    #[test]
+    fn builtin_engine_remains_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BuiltinEngine>();
+    }
+
+    #[test]
+    fn concurrent_same_corpus_builds_one_index() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let memories = Arc::new(vec![Memory {
+            id: 8_765_432,
+            text: "single-flight-fts-corpus-unique".to_string(),
+            created_at: now(),
+            last_used: now(),
+            mentions: 0,
+            importance: 0.5,
+            tags: vec!["single-flight".to_string()],
+            embedding: None,
+        }]);
+        let barrier = Arc::new(Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let memories = Arc::clone(&memories);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let scores = bm25_similarities(&memories, "single-flight-fts-corpus-unique");
+                    assert!(!scores.is_empty());
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn saturated_cache_admission_waits_and_stays_bounded() {
+        use std::sync::mpsc;
+        use std::sync::Arc;
+        use std::thread;
+        use std::time::Duration;
+
+        let store = Arc::new(FtsCacheStore::new());
+        for fingerprint in 0..MAX_CACHED_CORPORA as u64 {
+            store.reserve(fingerprint);
+        }
+        let (sent, received) = mpsc::channel();
+        let waiter_store = Arc::clone(&store);
+        let waiter = thread::spawn(move || sent.send(waiter_store.reserve(99)));
+
+        assert!(received.recv_timeout(Duration::from_millis(50)).is_err());
+        let first = {
+            let entries = store.entries.lock().unwrap();
+            Arc::clone(entries.get(&0).unwrap())
+        };
+        assert!(first.index.set(None).is_ok());
+        store.notify();
+
+        received
+            .recv_timeout(Duration::from_secs(1))
+            .expect("saturated waiter was not woken");
+        waiter.join().unwrap().unwrap();
+        assert!(store.entries.lock().unwrap().len() <= MAX_CACHED_CORPORA);
     }
 
     #[test]
