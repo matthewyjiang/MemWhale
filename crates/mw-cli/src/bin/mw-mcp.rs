@@ -177,17 +177,30 @@ fn call_tool(name: &str, args: &Value, client_name: Option<&str>) -> Result<Stri
 
 fn recent_errors(limit: i64) -> Result<String, String> {
     let conn = open()?;
+    let has_command_runs: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM sqlite_master
+                  WHERE type IN ('table', 'view') AND name COLLATE NOCASE = ?1
+             )",
+            ["command_runs"],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
     // A brand-new store has only the bookmarks table; `command_runs` appears
-    // once something is recorded. Treat its absence as "no failures yet" (same
-    // graceful-read convention as `load_memories`) rather than erroring.
-    let Ok(mut stmt) = conn.prepare(
-        "SELECT argv_json, cwd, exit_code, stderr, notes, created_at
+    // once something is recorded. Treat only its absence as "no failures yet";
+    // present-table preparation/query/row errors remain visible to MCP callers.
+    if !has_command_runs {
+        return Ok("(no failed commands recorded)".to_string());
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT argv_json, cwd, exit_code, stderr, notes, created_at
              FROM command_runs
              WHERE exit_code IS NOT NULL AND exit_code != 0
              ORDER BY id DESC LIMIT ?1",
-    ) else {
-        return Ok("(no failed commands recorded)".to_string());
-    };
+        )
+        .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![limit], |r| {
             Ok((
@@ -293,7 +306,8 @@ fn search_memory(
     // Unscoped (no project/machine) leaves the memory set untouched.
     let mems = memorywhale_cli::scope_memories(
         &conn,
-        memorywhale_core::sqlite::load_memories(&conn),
+        memorywhale_core::sqlite::load_memories(&conn)
+            .map_err(|e| format!("failed to load memories: {e}"))?,
         project,
         machine,
         None,
@@ -336,7 +350,8 @@ fn get_context(project: Option<&str>, machine: Option<&str>) -> Result<String, S
     let scope = project.map(|p| p.trim_start_matches("project:"));
     let mems = memorywhale_cli::scope_memories(
         &conn,
-        memorywhale_core::sqlite::load_memories(&conn),
+        memorywhale_core::sqlite::load_memories(&conn)
+            .map_err(|e| format!("failed to load memories: {e}"))?,
         scope.filter(|s| !s.is_empty()),
         machine,
         None,
