@@ -41,9 +41,8 @@ That copies the capture hook and skill into `~/.claude/`, merges the
 when the Claude Code CLI is on your PATH. Restart Claude Code afterward. To
 undo: `mw integrate claude --revert`.
 
-The bundled hook and skill ship inside the `memorywhale-cli` crate
-(`crates/mw-cli/claude-code/`). The copies under `integrations/claude-code/`
-mirror those files for documentation.
+The bundled hook and skill live in `crates/mw-cli/claude-code/` so they ship
+inside the published package.
 
 ### Manual setup
 
@@ -69,7 +68,7 @@ Copy the bundled hook into your personal Claude Code configuration:
 
 ```bash
 mkdir -p ~/.claude/hooks
-cp integrations/claude-code/hooks/mw-record.py ~/.claude/hooks/mw-record.py
+cp crates/mw-cli/claude-code/mw-record.py ~/.claude/hooks/mw-record.py
 chmod +x ~/.claude/hooks/mw-record.py
 ```
 
@@ -105,7 +104,7 @@ Copy the skill into Claude Code's personal skills directory:
 
 ```bash
 mkdir -p ~/.claude/skills/memorywhale
-cp integrations/claude-code/memorywhale/SKILL.md ~/.claude/skills/memorywhale/SKILL.md
+cp crates/mw-cli/claude-code/SKILL.md ~/.claude/skills/memorywhale/SKILL.md
 ```
 
 Claude Code can load personal skills from
@@ -149,7 +148,7 @@ MCP server is not connected, so each component can be installed separately.
 
 ## Automatic capture
 
-The bundled [`hooks/mw-record.py`](hooks/mw-record.py) hook receives Claude
+The bundled [`mw-record.py`](../../crates/mw-cli/claude-code/mw-record.py) hook receives Claude
 Code's documented `PostToolUse` JSON on standard input. For each `Bash` call,
 it passes the command, working directory, output, and an exit status to
 `mw-remember` with the note `agent:claude-code`; failed commands are recorded

@@ -88,12 +88,12 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | mw-
 ## Claude Code automatic capture
 
 The optional
-[`claude-code/hooks/mw-record.py`](claude-code/hooks/mw-record.py)
+[`mw-record.py`](../crates/mw-cli/claude-code/mw-record.py)
 `PostToolUse` hook captures Claude Code Bash calls through `mw-remember`. It is
 separate from MCP: MCP lets the client retrieve and explicitly save memory,
 while the hook records observed execution.
 
-The optional [`claude-code/memorywhale/SKILL.md`](claude-code/memorywhale/SKILL.md)
+The optional [`SKILL.md`](../crates/mw-cli/claude-code/SKILL.md)
 teaches Claude Code when to search and save memory. Both require explicit
 installation and neither is needed for ordinary terminal capture.
 

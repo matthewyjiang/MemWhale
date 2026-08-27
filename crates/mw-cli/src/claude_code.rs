@@ -1,7 +1,9 @@
 //! Claude Code integration: capture hook, skill, and MCP registration.
 
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -9,127 +11,213 @@ use std::process::Command;
 const HOOK_SCRIPT: &str = include_str!("../claude-code/mw-record.py");
 const SKILL: &str = include_str!("../claude-code/SKILL.md");
 
-const MCP_SCOPE: &[&str] = &["--scope", "user"];
+const MCP_ADD: &str = "claude mcp add --scope user --transport stdio memorywhale -- mw-mcp";
+const MCP_REMOVE: &str = "claude mcp remove --scope user memorywhale";
 
-/// Paths written or updated by [`install`].
-pub struct InstallResult {
-    pub config_dir: PathBuf,
-    pub hook_path: PathBuf,
-    pub settings_path: PathBuf,
-    pub skill_path: PathBuf,
-    pub mcp_registered: bool,
+/// `mw integrate claude [--revert]`
+pub fn cli(args: &[String]) -> Result<(), String> {
+    let mut revert = false;
+    for arg in args {
+        match arg.as_str() {
+            "--revert" => revert = true,
+            _ => return Err("usage: mw integrate claude [--revert]".to_string()),
+        }
+    }
+    if revert {
+        report_revert(uninstall()?);
+    } else {
+        report_install(install()?);
+    }
+    Ok(())
 }
 
-/// What [`revert`] removed or updated.
-pub struct RevertResult {
-    pub config_dir: PathBuf,
-    pub hook_removed: bool,
-    pub skill_removed: bool,
-    pub settings_updated: bool,
-    pub mcp_unregistered: bool,
+struct InstallResult {
+    config_dir: PathBuf,
+    hook_path: PathBuf,
+    settings_path: PathBuf,
+    skill_path: PathBuf,
+    mcp: McpOutcome,
 }
 
-/// Install MemoryWhale into Claude Code: capture hook, skill, and (when
-/// possible) the user-scoped `memorywhale` MCP server.
-pub fn install() -> Result<InstallResult, String> {
-    let config_dir = claude_config_dir()?;
-    let hook_path = config_dir.join("hooks/mw-record.py");
-    let skill_path = config_dir.join("skills/memorywhale/SKILL.md");
-    let settings_path = config_dir.join("settings.json");
+struct RevertResult {
+    config_dir: PathBuf,
+    hook_removed: bool,
+    skill_removed: bool,
+    settings_updated: bool,
+    mcp: McpOutcome,
+}
 
-    let existing = read_settings(&settings_path)?;
-    let (updated, settings_changed) = merge_settings(&existing, &hook_path)?;
+enum McpOutcome {
+    /// `claude mcp add`/`remove` succeeded.
+    Changed,
+    /// Already in the desired state.
+    Unchanged,
+    /// `claude` is not on PATH.
+    CliMissing,
+    /// `claude` ran but the add/remove failed.
+    Failed,
+}
 
-    fs::create_dir_all(config_dir.join("hooks"))
-        .map_err(|err| format!("failed to create {}: {err}", config_dir.join("hooks").display()))?;
-    fs::create_dir_all(config_dir.join("skills").join("memorywhale")).map_err(|err| {
-        format!(
-            "failed to create {}: {err}",
-            config_dir.join("skills/memorywhale").display()
-        )
-    })?;
+struct ClaudePaths {
+    config_dir: PathBuf,
+    hook_path: PathBuf,
+    skill_path: PathBuf,
+    skill_dir: PathBuf,
+    settings_path: PathBuf,
+}
 
-    fs::write(&hook_path, HOOK_SCRIPT)
-        .map_err(|err| format!("failed to write {}: {err}", hook_path.display()))?;
+impl ClaudePaths {
+    fn resolve() -> Result<Self, String> {
+        let config_dir = claude_config_dir()?;
+        let skill_dir = config_dir.join("skills/memorywhale");
+        Ok(Self {
+            hook_path: config_dir.join("hooks/mw-record.py"),
+            skill_path: skill_dir.join("SKILL.md"),
+            settings_path: config_dir.join("settings.json"),
+            skill_dir,
+            config_dir,
+        })
+    }
+}
+
+#[derive(Clone, Default, Deserialize, PartialEq, Serialize)]
+struct ClaudeSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hooks: Option<Hooks>,
+    #[serde(flatten)]
+    extra: Map<String, Value>,
+}
+
+#[derive(Clone, Default, Deserialize, PartialEq, Serialize)]
+struct Hooks {
+    #[serde(rename = "PostToolUse", default, skip_serializing_if = "Vec::is_empty")]
+    post_tool_use: Vec<HookGroup>,
+    #[serde(flatten)]
+    extra: Map<String, Value>,
+}
+
+impl Hooks {
+    fn is_empty(&self) -> bool {
+        self.post_tool_use.is_empty() && self.extra.is_empty()
+    }
+}
+
+#[derive(Clone, Deserialize, PartialEq, Serialize)]
+struct HookGroup {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    matcher: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hooks: Option<Vec<HookEntry>>,
+    #[serde(flatten)]
+    extra: Map<String, Value>,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Serialize)]
+struct HookEntry {
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    hook_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    #[serde(flatten)]
+    extra: Map<String, Value>,
+}
+
+impl HookEntry {
+    fn command(hook_path: &Path) -> Self {
+        Self {
+            hook_type: Some("command".to_string()),
+            command: Some(hook_command(hook_path)),
+            extra: Map::new(),
+        }
+    }
+
+    fn is_memorywhale(&self) -> bool {
+        self.command
+            .as_deref()
+            .is_some_and(is_memorywhale_hook_command)
+    }
+}
+
+fn install() -> Result<InstallResult, String> {
+    let paths = ClaudePaths::resolve()?;
+    let existing = read_settings(&paths.settings_path)?;
+    let (updated, settings_changed) = merge_settings(&existing, &paths.hook_path)?;
+
+    let hooks_dir = paths.config_dir.join("hooks");
+    fs::create_dir_all(&hooks_dir)
+        .map_err(|err| format!("failed to create {}: {err}", hooks_dir.display()))?;
+    fs::create_dir_all(&paths.skill_dir)
+        .map_err(|err| format!("failed to create {}: {err}", paths.skill_dir.display()))?;
+
+    fs::write(&paths.hook_path, HOOK_SCRIPT)
+        .map_err(|err| format!("failed to write {}: {err}", paths.hook_path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755))
-            .map_err(|err| format!("failed to chmod {}: {err}", hook_path.display()))?;
+        fs::set_permissions(&paths.hook_path, fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("failed to chmod {}: {err}", paths.hook_path.display()))?;
     }
 
-    fs::write(&skill_path, SKILL)
-        .map_err(|err| format!("failed to write {}: {err}", skill_path.display()))?;
+    fs::write(&paths.skill_path, SKILL)
+        .map_err(|err| format!("failed to write {}: {err}", paths.skill_path.display()))?;
 
     if settings_changed {
-        atomic_write(&settings_path, &updated)?;
+        atomic_write(&paths.settings_path, &updated)?;
     }
 
-    let mcp_registered = register_mcp();
-
     Ok(InstallResult {
-        config_dir,
-        hook_path,
-        settings_path,
-        skill_path,
-        mcp_registered,
+        mcp: register_mcp(),
+        config_dir: paths.config_dir,
+        hook_path: paths.hook_path,
+        settings_path: paths.settings_path,
+        skill_path: paths.skill_path,
     })
 }
 
-/// Undo [`install`]: drop our settings entry, then remove the hook and skill, and
-/// unregister the user-scoped MCP server when the Claude Code CLI is available.
-pub fn revert() -> Result<RevertResult, String> {
-    let config_dir = claude_config_dir()?;
-    let hook_path = config_dir.join("hooks/mw-record.py");
-    let skill_path = config_dir.join("skills/memorywhale/SKILL.md");
-    let skill_dir = config_dir.join("skills/memorywhale");
-    let settings_path = config_dir.join("settings.json");
-
-    let existing = read_settings(&settings_path)?;
-    let (updated, settings_changed) = if settings_path.exists() {
-        unmerge_settings(&existing, &hook_path)?
+fn uninstall() -> Result<RevertResult, String> {
+    let paths = ClaudePaths::resolve()?;
+    let existing = read_settings(&paths.settings_path)?;
+    let (updated, settings_changed) = if paths.settings_path.exists() {
+        unmerge_settings(&existing)?
     } else {
         (String::new(), false)
     };
 
     if settings_changed {
         if updated.trim().is_empty() {
-            let _ = fs::remove_file(&settings_path);
+            let _ = fs::remove_file(&paths.settings_path);
         } else {
-            atomic_write(&settings_path, &updated)?;
+            atomic_write(&paths.settings_path, &updated)?;
         }
     }
 
-    let hook_removed = if hook_path.is_file() {
-        fs::remove_file(&hook_path)
-            .map_err(|err| format!("failed to remove {}: {err}", hook_path.display()))?;
+    let hook_removed = if paths.hook_path.is_file() {
+        fs::remove_file(&paths.hook_path)
+            .map_err(|err| format!("failed to remove {}: {err}", paths.hook_path.display()))?;
         true
     } else {
         false
     };
 
-    let skill_removed = if skill_path.is_file() {
-        fs::remove_file(&skill_path)
-            .map_err(|err| format!("failed to remove {}: {err}", skill_path.display()))?;
-        let _ = fs::remove_dir(&skill_dir);
+    let skill_removed = if paths.skill_path.is_file() {
+        fs::remove_file(&paths.skill_path)
+            .map_err(|err| format!("failed to remove {}: {err}", paths.skill_path.display()))?;
+        let _ = fs::remove_dir(&paths.skill_dir);
         true
     } else {
         false
     };
-
-    let mcp_unregistered = unregister_mcp();
 
     Ok(RevertResult {
-        config_dir,
+        mcp: unregister_mcp(),
+        config_dir: paths.config_dir,
         hook_removed,
         skill_removed,
         settings_updated: settings_changed,
-        mcp_unregistered,
     })
 }
 
-/// Claude Code config root. Override with `CLAUDE_CONFIG_DIR` (for tests).
-pub fn claude_config_dir() -> Result<PathBuf, String> {
+fn claude_config_dir() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("CLAUDE_CONFIG_DIR") {
         return Ok(PathBuf::from(path));
     }
@@ -151,29 +239,25 @@ fn hook_command(hook_path: &Path) -> String {
     format!("python3 \"{}\"", hook_path.display())
 }
 
-/// Commands written by MemoryWhale for the Claude capture hook.
-fn is_memorywhale_hook_command(command: Option<&str>) -> bool {
-    let Some(command) = command else {
-        return false;
-    };
+fn is_memorywhale_hook_command(command: &str) -> bool {
     command.starts_with("python3 \"") && command.ends_with("hooks/mw-record.py\"")
 }
 
-fn parse_settings(existing: &str) -> Result<Value, String> {
+fn parse_settings(existing: &str) -> Result<ClaudeSettings, String> {
     if existing.trim().is_empty() {
-        return Ok(json!({}));
+        return Ok(ClaudeSettings::default());
     }
-    let root: Value = serde_json::from_str(existing).map_err(|err| {
-        format!("invalid Claude settings.json; file was not changed: {err}")
-    })?;
+    let root: Value = serde_json::from_str(existing)
+        .map_err(|err| format!("invalid Claude settings.json; file was not changed: {err}"))?;
     if !root.is_object() {
         return Err("invalid Claude settings.json; expected a top-level object".to_string());
     }
-    Ok(root)
+    serde_json::from_value(root)
+        .map_err(|err| format!("invalid Claude settings.json; file was not changed: {err}"))
 }
 
-fn serialize_settings(root: &Value) -> Result<String, String> {
-    if root.as_object().is_some_and(|obj| obj.is_empty()) {
+fn serialize_settings(root: &ClaudeSettings) -> Result<String, String> {
+    if root.hooks.is_none() && root.extra.is_empty() {
         return Ok(String::new());
     }
     serde_json::to_string_pretty(root)
@@ -184,63 +268,23 @@ fn serialize_settings(root: &Value) -> Result<String, String> {
 fn merge_settings(existing: &str, hook_path: &Path) -> Result<(String, bool), String> {
     let before = parse_settings(existing)?;
     let mut root = before.clone();
+    let entry = HookEntry::command(hook_path);
 
-    let command = hook_command(hook_path);
-    let entry = json!({
-        "type": "command",
-        "command": command,
-    });
-
-    let hooks = root
-        .as_object_mut()
-        .expect("checked above")
-        .entry("hooks")
-        .or_insert_with(|| json!({}));
-    if !hooks.is_object() {
-        return Err(
-            "invalid Claude settings.json; hooks must be an object and file was not changed"
-                .to_string(),
-        );
-    }
-
-    let post_tool_use = hooks
-        .as_object_mut()
-        .expect("checked above")
-        .entry("PostToolUse")
-        .or_insert_with(|| json!([]));
-    if !post_tool_use.is_array() {
-        return Err(
-            "invalid Claude settings.json; hooks.PostToolUse must be an array and file was not changed"
-                .to_string(),
-        );
-    }
-
-    let groups = post_tool_use.as_array_mut().expect("checked above");
-    if let Some(bash_group) = groups
+    let hooks = root.hooks.get_or_insert_with(Hooks::default);
+    if let Some(group) = hooks
+        .post_tool_use
         .iter_mut()
-        .find(|group| group.get("matcher").and_then(Value::as_str) == Some("Bash"))
+        .find(|group| group.matcher.as_deref() == Some("Bash"))
     {
-        let hook_list = bash_group
-            .as_object_mut()
-            .and_then(|obj| obj.get_mut("hooks"))
-            .ok_or_else(|| {
-                "invalid Claude settings.json; Bash hook group is missing a hooks array".to_string()
-            })?;
-        if !hook_list.is_array() {
-            return Err(
-                "invalid Claude settings.json; Bash hook group hooks must be an array".to_string(),
-            );
-        }
-        let hooks_array = hook_list.as_array_mut().expect("checked above");
-        hooks_array.retain(|hook| {
-            !is_memorywhale_hook_command(hook.get("command").and_then(Value::as_str))
-        });
-        hooks_array.push(entry);
+        let list = group.hooks.get_or_insert_with(Vec::new);
+        list.retain(|hook| !hook.is_memorywhale());
+        list.push(entry);
     } else {
-        groups.push(json!({
-            "matcher": "Bash",
-            "hooks": [entry],
-        }));
+        hooks.post_tool_use.push(HookGroup {
+            matcher: Some("Bash".to_string()),
+            hooks: Some(vec![entry]),
+            extra: Map::new(),
+        });
     }
 
     if root == before {
@@ -249,59 +293,29 @@ fn merge_settings(existing: &str, hook_path: &Path) -> Result<(String, bool), St
     Ok((serialize_settings(&root)?, true))
 }
 
-fn unmerge_settings(existing: &str, hook_path: &Path) -> Result<(String, bool), String> {
+fn unmerge_settings(existing: &str) -> Result<(String, bool), String> {
     if existing.trim().is_empty() {
         return Ok((String::new(), false));
     }
 
     let before = parse_settings(existing)?;
     let mut root = before.clone();
-
-    let Some(hooks) = root.get_mut("hooks") else {
+    let Some(hooks) = root.hooks.as_mut() else {
         return Ok((existing.to_string(), false));
     };
-    if !hooks.is_object() {
-        return Err(
-            "invalid Claude settings.json; hooks must be an object and file was not changed"
-                .to_string(),
-        );
-    }
 
-    let Some(post_tool_use) = hooks.get_mut("PostToolUse") else {
-        return Ok((existing.to_string(), false));
-    };
-    if !post_tool_use.is_array() {
-        return Err(
-            "invalid Claude settings.json; hooks.PostToolUse must be an array and file was not changed"
-                .to_string(),
-        );
-    }
-
-    let expected = hook_command(hook_path);
-    let groups = post_tool_use.as_array_mut().expect("checked above");
-    groups.retain_mut(|group| {
-        if group.get("matcher").and_then(Value::as_str) != Some("Bash") {
+    hooks.post_tool_use.retain_mut(|group| {
+        if group.matcher.as_deref() != Some("Bash") {
             return true;
         }
-        let Some(hook_list) = group.as_object_mut().and_then(|obj| obj.get_mut("hooks")) else {
+        let Some(list) = group.hooks.as_mut() else {
             return true;
         };
-        if !hook_list.is_array() {
-            return true;
-        }
-        let hooks_array = hook_list.as_array_mut().expect("checked above");
-        hooks_array.retain(|hook| {
-            hook.get("command").and_then(Value::as_str) != Some(expected.as_str())
-                && !is_memorywhale_hook_command(hook.get("command").and_then(Value::as_str))
-        });
-        !hooks_array.is_empty()
+        list.retain(|hook| !hook.is_memorywhale());
+        !list.is_empty()
     });
-
-    if groups.is_empty() {
-        hooks.as_object_mut().expect("checked above").remove("PostToolUse");
-    }
-    if hooks.as_object().is_some_and(|obj| obj.is_empty()) {
-        root.as_object_mut().expect("checked above").remove("hooks");
+    if hooks.is_empty() {
+        root.hooks = None;
     }
 
     if root == before {
@@ -327,77 +341,109 @@ fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
     })
 }
 
-fn unregister_mcp() -> bool {
-    let Some(claude) = which("claude") else {
-        return false;
-    };
-    if !mcp_already_registered(&claude) {
-        return false;
-    }
-    Command::new(&claude)
-        .arg("mcp")
-        .arg("remove")
-        .args(MCP_SCOPE)
-        .arg("memorywhale")
-        .status()
-        .ok()
-        .is_some_and(|status| status.success())
-}
-
-fn register_mcp() -> bool {
-    let Some(claude) = which("claude") else {
-        return false;
-    };
-    if mcp_already_registered(&claude) {
-        return true;
-    }
-    Command::new(&claude)
-        .arg("mcp")
-        .arg("add")
-        .args(MCP_SCOPE)
-        .arg("--transport")
-        .arg("stdio")
-        .arg("memorywhale")
-        .arg("--")
-        .arg("mw-mcp")
-        .status()
-        .ok()
-        .is_some_and(|status| status.success())
-}
-
-fn mcp_already_registered(claude: &str) -> bool {
-    Command::new(claude)
-        .arg("mcp")
-        .arg("get")
-        .args(MCP_SCOPE)
-        .arg("memorywhale")
+fn register_mcp() -> McpOutcome {
+    match Command::new("claude")
+        .args(["mcp", "get", "--scope", "user", "memorywhale"])
         .output()
-        .ok()
-        .is_some_and(|output| output.status.success())
+    {
+        Ok(output) if output.status.success() => McpOutcome::Unchanged,
+        Err(err) if err.kind() == ErrorKind::NotFound => McpOutcome::CliMissing,
+        Err(_) => McpOutcome::Failed,
+        Ok(_) => match Command::new("claude")
+            .args([
+                "mcp",
+                "add",
+                "--scope",
+                "user",
+                "--transport",
+                "stdio",
+                "memorywhale",
+                "--",
+                "mw-mcp",
+            ])
+            .status()
+        {
+            Ok(status) if status.success() => McpOutcome::Changed,
+            Err(err) if err.kind() == ErrorKind::NotFound => McpOutcome::CliMissing,
+            _ => McpOutcome::Failed,
+        },
+    }
 }
 
-fn which(name: &str) -> Option<String> {
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths).find_map(|dir| {
-            let direct = dir.join(name);
-            if direct.is_file() {
-                return Some(direct.to_string_lossy().into_owned());
-            }
-            #[cfg(windows)]
-            {
-                let exe = dir.join(format!("{name}.exe"));
-                if exe.is_file() {
-                    return Some(exe.to_string_lossy().into_owned());
-                }
-            }
-            None
-        })
-    })
+fn unregister_mcp() -> McpOutcome {
+    match Command::new("claude")
+        .args(["mcp", "get", "--scope", "user", "memorywhale"])
+        .output()
+    {
+        Ok(output) if output.status.success() => match Command::new("claude")
+            .args(["mcp", "remove", "--scope", "user", "memorywhale"])
+            .status()
+        {
+            Ok(status) if status.success() => McpOutcome::Changed,
+            Err(err) if err.kind() == ErrorKind::NotFound => McpOutcome::CliMissing,
+            _ => McpOutcome::Failed,
+        },
+        Ok(_) => McpOutcome::Unchanged,
+        Err(err) if err.kind() == ErrorKind::NotFound => McpOutcome::CliMissing,
+        Err(_) => McpOutcome::Failed,
+    }
+}
+
+fn report_install(result: InstallResult) {
+    println!("MemoryWhale installed for Claude Code.");
+    println!("  config:   {}", result.config_dir.display());
+    println!("  hook:     {}", result.hook_path.display());
+    println!("  settings: {}", result.settings_path.display());
+    println!("  skill:    {}", result.skill_path.display());
+    match result.mcp {
+        McpOutcome::Changed | McpOutcome::Unchanged => {
+            println!("  mcp:      memorywhale registered (user scope)");
+        }
+        McpOutcome::CliMissing => {
+            println!(
+                "  mcp:      not registered — install the Claude Code CLI and run:\n\
+                          {MCP_ADD}"
+            );
+        }
+        McpOutcome::Failed => {
+            println!(
+                "  mcp:      not registered — `claude mcp add` failed. Run:\n          {MCP_ADD}"
+            );
+        }
+    }
+    println!("Restart Claude Code to pick up hook and skill changes.");
+}
+
+fn report_revert(result: RevertResult) {
+    println!("MemoryWhale removed from Claude Code.");
+    println!("  config:   {}", result.config_dir.display());
+    if result.hook_removed {
+        println!("  hook:     removed");
+    }
+    if result.skill_removed {
+        println!("  skill:    removed");
+    }
+    if result.settings_updated {
+        println!("  settings: MemoryWhale hook entry removed");
+    }
+    match result.mcp {
+        McpOutcome::Changed => {
+            println!("  mcp:      memorywhale unregistered (user scope)");
+        }
+        McpOutcome::Unchanged => {}
+        McpOutcome::CliMissing | McpOutcome::Failed => {
+            println!(
+                "  mcp:      not unregistered — run manually if needed:\n            {MCP_REMOVE}"
+            );
+        }
+    }
+    println!("Restart Claude Code to pick up the change.");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn merge_settings_adds_bash_hook_to_empty_config() {
@@ -440,19 +486,17 @@ mod tests {
     #[test]
     fn merge_settings_updates_stale_hook_path() {
         let hook = PathBuf::from("/new/home/.claude/hooks/mw-record.py");
-        let existing = format!(
-            r#"{{
-  "hooks": {{
+        let existing = r#"{
+  "hooks": {
     "PostToolUse": [
-      {{
+      {
         "matcher": "Bash",
-        "hooks": [{{"type": "command", "command": "python3 \"/old/home/.claude/hooks/mw-record.py\""}}]
-      }}
+        "hooks": [{"type": "command", "command": "python3 \"/old/home/.claude/hooks/mw-record.py\""}]
+      }
     ]
-  }}
-}}"#
-        );
-        let (merged, changed) = merge_settings(&existing, &hook).unwrap();
+  }
+}"#;
+        let (merged, changed) = merge_settings(existing, &hook).unwrap();
         assert!(changed);
         let command = serde_json::from_str::<Value>(&merged).unwrap()["hooks"]["PostToolUse"][0]
             ["hooks"][0]["command"]
@@ -493,7 +537,7 @@ mod tests {
             &hook,
         )
         .unwrap();
-        let (reverted, changed) = unmerge_settings(&installed, &hook).unwrap();
+        let (reverted, changed) = unmerge_settings(&installed).unwrap();
         assert!(changed);
         let parsed: Value = serde_json::from_str(&reverted).unwrap();
         assert_eq!(parsed["theme"], "dark");
@@ -513,23 +557,21 @@ mod tests {
     fn unmerge_settings_drops_empty_hook_groups() {
         let hook = PathBuf::from("/tmp/.claude/hooks/mw-record.py");
         let (installed, _) = merge_settings("", &hook).unwrap();
-        let (reverted, changed) = unmerge_settings(&installed, &hook).unwrap();
+        let (reverted, changed) = unmerge_settings(&installed).unwrap();
         assert!(changed);
         assert!(reverted.trim().is_empty());
     }
 
     #[test]
     fn unmerge_settings_is_unchanged_without_memorywhale_hook() {
-        let hook = PathBuf::from("/tmp/.claude/hooks/mw-record.py");
         let original = r#"{"theme":"dark"}"#;
-        let (updated, changed) = unmerge_settings(original, &hook).unwrap();
+        let (updated, changed) = unmerge_settings(original).unwrap();
         assert!(!changed);
         assert_eq!(updated, original);
     }
 
     #[test]
     fn unmerge_settings_does_not_remove_unrelated_bash_hooks() {
-        let hook = PathBuf::from("/tmp/.claude/hooks/mw-record.py");
         let original = r#"{
   "hooks": {
     "PostToolUse": [
@@ -540,38 +582,8 @@ mod tests {
     ]
   }
 }"#;
-        let (updated, changed) = unmerge_settings(original, &hook).unwrap();
+        let (updated, changed) = unmerge_settings(original).unwrap();
         assert!(!changed);
         assert_eq!(updated, original);
-    }
-
-    #[test]
-    fn bundled_assets_match_integrations_tree() {
-        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let repo = manifest.join("../..");
-        let pairs = [
-            (
-                manifest.join("claude-code/mw-record.py"),
-                repo.join("integrations/claude-code/hooks/mw-record.py"),
-            ),
-            (
-                manifest.join("claude-code/SKILL.md"),
-                repo.join("integrations/claude-code/memorywhale/SKILL.md"),
-            ),
-        ];
-        for (crate_copy, integrations_copy) in pairs {
-            let crate_bytes = fs::read(&crate_copy).unwrap_or_else(|err| {
-                panic!("failed to read {}: {err}", crate_copy.display())
-            });
-            let integrations_bytes = fs::read(&integrations_copy).unwrap_or_else(|err| {
-                panic!("failed to read {}: {err}", integrations_copy.display())
-            });
-            assert_eq!(
-                crate_bytes, integrations_bytes,
-                "{} and {} drifted — update both copies",
-                crate_copy.display(),
-                integrations_copy.display()
-            );
-        }
     }
 }

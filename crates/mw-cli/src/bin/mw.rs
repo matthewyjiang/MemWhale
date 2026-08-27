@@ -322,7 +322,7 @@ fn print_help() {
 
 fn integrate_cmd(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        Some("claude" | "claude-code") => integrate_claude_cmd(&args[1..]),
+        Some("claude" | "claude-code") => memorywhale_cli::claude_code::cli(&args[1..]),
         Some("hermes") if args.len() == 1 => {
             let config_path = memorywhale_cli::hermes::install()?;
             println!(
@@ -336,56 +336,6 @@ fn integrate_cmd(args: &[String]) -> Result<(), String> {
         )),
         None => Err("usage: mw integrate claude [--revert]|hermes".to_string()),
     }
-}
-
-fn integrate_claude_cmd(args: &[String]) -> Result<(), String> {
-    let revert = args.iter().any(|arg| arg == "--revert");
-    let extras: Vec<&String> = args.iter().filter(|arg| *arg != "--revert").collect();
-    if !extras.is_empty() {
-        return Err("usage: mw integrate claude [--revert]".to_string());
-    }
-
-    if revert {
-        let result = memorywhale_cli::claude_code::revert()?;
-        println!("MemoryWhale removed from Claude Code.");
-        println!("  config:   {}", result.config_dir.display());
-        if result.hook_removed {
-            println!("  hook:     removed");
-        }
-        if result.skill_removed {
-            println!("  skill:    removed");
-        }
-        if result.settings_updated {
-            println!("  settings: MemoryWhale hook entry removed");
-        }
-        if result.mcp_unregistered {
-            println!("  mcp:      memorywhale unregistered (user scope)");
-        } else {
-            println!(
-                "  mcp:      not unregistered — run manually if needed:\n\
-                            claude mcp remove --scope user memorywhale"
-            );
-        }
-        println!("Restart Claude Code to pick up the change.");
-        return Ok(());
-    }
-
-    let result = memorywhale_cli::claude_code::install()?;
-    println!("MemoryWhale installed for Claude Code.");
-    println!("  config:   {}", result.config_dir.display());
-    println!("  hook:     {}", result.hook_path.display());
-    println!("  settings: {}", result.settings_path.display());
-    println!("  skill:    {}", result.skill_path.display());
-    if result.mcp_registered {
-        println!("  mcp:      memorywhale registered (user scope)");
-    } else {
-        println!(
-            "  mcp:      not registered — install the Claude Code CLI and run:\n\
-                        claude mcp add --scope user --transport stdio memorywhale -- mw-mcp"
-        );
-    }
-    println!("Restart Claude Code to pick up hook and skill changes.");
-    Ok(())
 }
 
 /// Shown only on a genuine cold start: no hook wired and nothing recorded yet.

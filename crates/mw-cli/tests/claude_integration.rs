@@ -34,12 +34,10 @@ fn user_can_install_memorywhale_into_a_fresh_claude_config() {
         .iter()
         .find(|group| group["matcher"] == "Bash")
         .expect("missing Bash hook group");
-    assert!(
-        bash_group["hooks"][0]["command"]
-            .as_str()
-            .unwrap()
-            .contains("mw-record.py")
-    );
+    assert!(bash_group["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .contains("mw-record.py"));
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("Claude Code"),
         "missing success message: {output:?}"
@@ -247,7 +245,8 @@ fn revert_without_memorywhale_installed_is_a_noop_for_settings() {
     assert!(output.status.success(), "revert failed: {output:?}");
     assert_eq!(std::fs::read_to_string(settings_path).unwrap(), original);
     assert!(
-        !String::from_utf8_lossy(&output.stdout).contains("settings: MemoryWhale hook entry removed"),
+        !String::from_utf8_lossy(&output.stdout)
+            .contains("settings: MemoryWhale hook entry removed"),
         "unexpected settings message: {output:?}"
     );
 }
