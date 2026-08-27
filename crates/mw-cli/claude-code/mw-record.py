@@ -48,7 +48,9 @@ def bash_exit_code(payload, tool_response=None):
     error_text = str(payload.get("error", ""))
     match = EXIT_CODE_RE.search(error_text)
     if match:
-        return match.group(1)
+        code = int(match.group(1))
+        if 0 <= code <= 255:
+            return str(code)
     return None
 
 

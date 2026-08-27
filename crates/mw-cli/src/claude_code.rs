@@ -283,18 +283,7 @@ fn serialize_settings(root: &ClaudeSettings) -> Result<String, String> {
 }
 
 fn upsert_bash_hook(groups: &mut Vec<HookGroup>, entry: HookEntry) {
-    for group in groups.iter_mut() {
-        if group.matcher.as_deref() != Some("Bash") {
-            continue;
-        }
-        if let Some(list) = group.hooks.as_mut() {
-            list.retain(|hook| !hook.is_memorywhale());
-        }
-    }
-    groups.retain(|group| {
-        group.matcher.as_deref() != Some("Bash")
-            || group.hooks.as_ref().is_some_and(|list| !list.is_empty())
-    });
+    remove_memorywhale_bash_hooks(groups);
 
     if let Some(group) = groups
         .iter_mut()
@@ -395,14 +384,28 @@ fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
 
 const MCP_SERVER_NAME: &str = "memorywhale";
 
-/// User-scoped MCP servers live in the top-level `mcpServers` map in `~/.claude.json`.
-/// `claude mcp get` resolves the highest-precedence definition across scopes, so it
-/// cannot tell us whether the user-scoped entry exists.
+fn user_scoped_mcp_config_path_from(
+    config_dir: Option<&Path>,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(dir) = config_dir {
+        return Some(dir.join(".claude.json"));
+    }
+    home.map(|path| path.join(".claude.json"))
+}
+
+fn user_scoped_mcp_config_path() -> Option<PathBuf> {
+    let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
+    user_scoped_mcp_config_path_from(config_dir.as_deref(), dirs::home_dir().as_deref())
+}
+
+/// User-scoped MCP servers live in the top-level `mcpServers` map in `.claude.json`.
+/// With the default config dir that file is `~/.claude.json`; when `CLAUDE_CONFIG_DIR`
+/// is set, Claude Code stores it at `$CLAUDE_CONFIG_DIR/.claude.json` instead.
 fn user_scoped_mcp_registered(server_name: &str) -> bool {
-    let Some(home) = dirs::home_dir() else {
+    let Some(path) = user_scoped_mcp_config_path() else {
         return false;
     };
-    let path = home.join(".claude.json");
     let Ok(content) = fs::read_to_string(&path) else {
         return false;
     };
@@ -676,6 +679,20 @@ mod tests {
             .map(|hook| hook["command"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert_eq!(commands, vec!["echo first", hook_command(&hook).as_str()]);
+    }
+
+    #[test]
+    fn user_scoped_mcp_config_path_honors_claude_config_dir() {
+        let custom = PathBuf::from("/tmp/custom-claude");
+        assert_eq!(
+            user_scoped_mcp_config_path_from(Some(custom.as_path()), None),
+            Some(custom.join(".claude.json"))
+        );
+        let home = PathBuf::from("/home/me");
+        assert_eq!(
+            user_scoped_mcp_config_path_from(None, Some(home.as_path())),
+            Some(home.join(".claude.json"))
+        );
     }
 
     #[test]

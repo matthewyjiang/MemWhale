@@ -19,6 +19,29 @@ fn sandbox(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn custom_claude_config_dir_mcp_state_is_read_from_matching_claude_json() {
+    let claude_dir = sandbox("mcp-config-dir");
+    std::fs::write(
+        claude_dir.join(".claude.json"),
+        r#"{"mcpServers":{"memorywhale":{"command":"mw-mcp","args":[]}}}"#,
+    )
+    .unwrap();
+
+    let output = mw_cmd()
+        .args(["integrate", "claude"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude integration command");
+
+    assert!(output.status.success(), "command failed: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("memorywhale registered (user scope)"),
+        "missing MCP success message: {output:?}"
+    );
+}
+
+#[test]
 fn user_can_install_memorywhale_into_a_fresh_claude_config() {
     let claude_dir = sandbox("fresh");
 
