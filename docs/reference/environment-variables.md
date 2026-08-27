@@ -22,5 +22,10 @@ command writes to `~/.hermes/config.yaml`.
 Used by `mw integrate claude` to locate Claude Code configuration. Without it,
 the command writes to `~/.claude/`.
 
+## `RHO_HOME`
+
+Used by `mw integrate rho` to locate Rho configuration. Without it, the command
+writes to `~/.rho/`.
+
 Additional command-specific variables are documented beside their commands in
 the [CLI reference](cli.md).

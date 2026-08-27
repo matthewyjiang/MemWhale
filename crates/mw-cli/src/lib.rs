@@ -2,6 +2,7 @@
 
 pub mod claude_code;
 pub mod hermes;
+pub mod rho;
 pub mod storage;
 pub mod tui;
 

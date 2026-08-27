@@ -44,7 +44,7 @@ features.
 | OpenRouter | No; hosted model gateway | No | No; configure in the agent | [Guide](openrouter/README.md) |
 | Pi coding agent | Unverified | No | No | [Guide](pi/README.md) |
 | Pullfrog | No; PR workflow only | No | No | [Guide](pullfrog/README.md) |
-| Rho | Yes | No | Yes, via `AGENTS.md` | [Guide](rho/README.md) |
+| Rho | Yes | Yes, optional capture hook | Yes, optional skill | [Guide](rho/README.md) |
 | VS Code / GitHub Copilot | Yes | No | Yes | [Guide](vscode/README.md) |
 | Windsurf | Yes | No | Yes | [Guide](windsurf/README.md) |
 | Zed | Yes | No | Yes | [Guide](zed/README.md) |
@@ -96,6 +96,14 @@ while the hook records observed execution.
 The optional [`SKILL.md`](../crates/mw-cli/claude-code/SKILL.md)
 teaches Claude Code when to search and save memory. Both require explicit
 installation and neither is needed for ordinary terminal capture.
+
+## Rho automatic capture
+
+The optional [`mw-record.py`](../crates/mw-cli/rho/mw-record.py) hook records
+Rho bash and powershell calls through `mw-remember`. It is separate from MCP:
+MCP lets the client retrieve and explicitly save memory, while the hook records
+observed execution. The optional [`SKILL.md`](../crates/mw-cli/rho/SKILL.md)
+teaches Rho when to search and save memory.
 
 ## Adding or updating an integration
 

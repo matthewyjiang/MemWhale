@@ -35,8 +35,8 @@ pet tui sync-mempalace git-fix doctor global status hooks integrate \
       ;;
     integrate)
       if [ "$COMP_CWORD" -eq 2 ]; then
-        COMPREPLY=( $(compgen -W "claude claude-code hermes" -- "$cur") )
-      elif [ "$COMP_CWORD" -eq 3 ] && { [ "${COMP_WORDS[2]}" = "claude" ] || [ "${COMP_WORDS[2]}" = "claude-code" ]; }; then
+        COMPREPLY=( $(compgen -W "claude claude-code hermes rho" -- "$cur") )
+      elif [ "$COMP_CWORD" -eq 3 ] && { [ "${COMP_WORDS[2]}" = "claude" ] || [ "${COMP_WORDS[2]}" = "claude-code" ] || [ "${COMP_WORDS[2]}" = "rho" ]; }; then
         COMPREPLY=( $(compgen -W "--revert" -- "$cur") )
       fi
       ;;
