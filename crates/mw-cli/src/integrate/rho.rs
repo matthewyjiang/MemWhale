@@ -373,9 +373,7 @@ fn ensure_child_table<'a>(
 fn memorywhale_server_table(doc: &mut DocumentMut) -> Result<&mut dyn TableLike, String> {
     let mcp = ensure_child_table(doc.as_table_mut(), "mcp", true)?;
     let servers = ensure_child_table(mcp, "servers", true)?;
-    let has_table_like = servers
-        .get("memorywhale")
-        .is_some_and(Item::is_table_like);
+    let has_table_like = servers.get("memorywhale").is_some_and(Item::is_table_like);
     if servers.contains_key("memorywhale") && !has_table_like {
         return Err(
             "invalid Rho config.toml; mcp.servers.memorywhale must be a table and the file was not changed"

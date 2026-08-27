@@ -3,7 +3,10 @@
 pub mod integrate;
 
 /// Deprecated: use [`integrate::hermes`] instead.
-#[deprecated(since = "0.9.2", note = "use memorywhale_cli::integrate::hermes instead")]
+#[deprecated(
+    since = "0.9.2",
+    note = "use memorywhale_cli::integrate::hermes instead"
+)]
 pub mod hermes {
     pub use crate::integrate::hermes::install;
 }
