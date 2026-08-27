@@ -41,8 +41,8 @@ That copies the capture hook and skill into `~/.claude/`, merges the
 when the Claude Code CLI is on your PATH. Restart Claude Code afterward. To
 undo: `mw integrate claude --revert`.
 
-The bundled hook and skill live in `crates/mw-cli/claude-code/` so they ship
-inside the published package.
+The bundled hook lives in `crates/mw-cli/claude-code/` and the skill in
+`crates/mw-cli/integrate/` so they ship inside the published package.
 
 ### Manual setup
 
@@ -115,7 +115,7 @@ Copy the skill into Claude Code's personal skills directory:
 
 ```bash
 mkdir -p ~/.claude/skills/memorywhale
-cp crates/mw-cli/claude-code/SKILL.md ~/.claude/skills/memorywhale/SKILL.md
+cp crates/mw-cli/integrate/SKILL.md ~/.claude/skills/memorywhale/SKILL.md
 ```
 
 Claude Code can load personal skills from

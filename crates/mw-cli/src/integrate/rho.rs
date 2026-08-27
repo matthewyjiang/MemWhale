@@ -1,13 +1,15 @@
 //! Rho integration: capture hook, skill, and MCP registration.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table};
 
-// In-crate so they ship inside the published package (same pattern as shell hooks).
-const HOOK_SCRIPT: &str = include_str!("../rho/mw-record.py");
-const SKILL: &str = include_str!("../rho/SKILL.md");
+use super::files::{
+    atomic_write, install_bundled, parse_revert, read_or_empty, remove_bundled, write_or_remove,
+    BundledLayout,
+};
+
+const HOOK_SCRIPT: &str = include_str!("../../rho/mw-record.py");
 
 const HOOK_ID: &str = "memorywhale-record";
 const HOOK_EVENT: &str = "after_tool_use";
@@ -18,14 +20,7 @@ const MCP_TRANSPORT: &str = "stdio";
 
 /// `mw integrate rho [--revert]`
 pub fn cli(args: &[String]) -> Result<(), String> {
-    let mut revert = false;
-    for arg in args {
-        match arg.as_str() {
-            "--revert" => revert = true,
-            _ => return Err("usage: mw integrate rho [--revert]".to_string()),
-        }
-    }
-    if revert {
+    if parse_revert(args, "usage: mw integrate rho [--revert]")? {
         report_revert(uninstall()?);
     } else {
         report_install(install()?);
@@ -37,7 +32,7 @@ struct InstallResult {
     config_dir: PathBuf,
     hook_path: PathBuf,
     hooks_path: PathBuf,
-    settings_path: PathBuf,
+    config_path: PathBuf,
     skill_path: PathBuf,
 }
 
@@ -50,83 +45,57 @@ struct RevertResult {
 }
 
 struct RhoPaths {
-    config_dir: PathBuf,
-    hook_path: PathBuf,
+    bundled: BundledLayout,
     hooks_path: PathBuf,
-    skill_path: PathBuf,
-    skill_dir: PathBuf,
-    settings_path: PathBuf,
+    config_path: PathBuf,
 }
 
 impl RhoPaths {
     fn resolve() -> Result<Self, String> {
-        let config_dir = rho_home()?;
-        let skill_dir = config_dir.join("skills/memorywhale");
+        let bundled = BundledLayout::from_config_dir(rho_home()?);
         Ok(Self {
-            hook_path: config_dir.join("hooks/mw-record.py"),
-            hooks_path: config_dir.join("hooks.toml"),
-            skill_path: skill_dir.join("SKILL.md"),
-            settings_path: config_dir.join("config.toml"),
-            skill_dir,
-            config_dir,
+            hooks_path: bundled.config_dir.join("hooks.toml"),
+            config_path: bundled.config_dir.join("config.toml"),
+            bundled,
         })
     }
 }
 
 fn install() -> Result<InstallResult, String> {
     let paths = RhoPaths::resolve()?;
-    let existing_hooks = read_file(&paths.hooks_path)?;
-    let existing_config = read_file(&paths.settings_path)?;
-    let (hooks_updated, hooks_changed) = merge_hooks(&existing_hooks, &paths.hook_path)?;
+    let existing_hooks = read_or_empty(&paths.hooks_path)?;
+    let existing_config = read_or_empty(&paths.config_path)?;
+    let (hooks_updated, hooks_changed) = merge_hooks(&existing_hooks, &paths.bundled.hook_path)?;
     let (config_updated, config_changed) = merge_mcp(&existing_config)?;
 
-    let hooks_dir = paths
-        .hook_path
-        .parent()
-        .ok_or_else(|| format!("hook path has no parent: {}", paths.hook_path.display()))?;
-    fs::create_dir_all(hooks_dir)
-        .map_err(|err| format!("failed to create {}: {err}", hooks_dir.display()))?;
-    fs::create_dir_all(&paths.skill_dir)
-        .map_err(|err| format!("failed to create {}: {err}", paths.skill_dir.display()))?;
-
-    fs::write(&paths.hook_path, HOOK_SCRIPT)
-        .map_err(|err| format!("failed to write {}: {err}", paths.hook_path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&paths.hook_path, fs::Permissions::from_mode(0o755))
-            .map_err(|err| format!("failed to chmod {}: {err}", paths.hook_path.display()))?;
-    }
-
-    fs::write(&paths.skill_path, SKILL)
-        .map_err(|err| format!("failed to write {}: {err}", paths.skill_path.display()))?;
+    install_bundled(&paths.bundled, HOOK_SCRIPT, super::SKILL)?;
 
     if hooks_changed {
         atomic_write(&paths.hooks_path, &hooks_updated)?;
     }
     if config_changed {
-        atomic_write(&paths.settings_path, &config_updated)?;
+        atomic_write(&paths.config_path, &config_updated)?;
     }
 
     Ok(InstallResult {
-        config_dir: paths.config_dir,
-        hook_path: paths.hook_path,
+        config_dir: paths.bundled.config_dir,
+        hook_path: paths.bundled.hook_path,
         hooks_path: paths.hooks_path,
-        settings_path: paths.settings_path,
-        skill_path: paths.skill_path,
+        config_path: paths.config_path,
+        skill_path: paths.bundled.skill_path,
     })
 }
 
 fn uninstall() -> Result<RevertResult, String> {
     let paths = RhoPaths::resolve()?;
-    let existing_hooks = read_file(&paths.hooks_path)?;
-    let existing_config = read_file(&paths.settings_path)?;
+    let existing_hooks = read_or_empty(&paths.hooks_path)?;
+    let existing_config = read_or_empty(&paths.config_path)?;
     let (hooks_updated, hooks_changed) = if paths.hooks_path.exists() {
         unmerge_hooks(&existing_hooks)?
     } else {
         (String::new(), false)
     };
-    let (config_updated, config_changed) = if paths.settings_path.exists() {
+    let (config_updated, config_changed) = if paths.config_path.exists() {
         unmerge_mcp(&existing_config)?
     } else {
         (String::new(), false)
@@ -136,28 +105,13 @@ fn uninstall() -> Result<RevertResult, String> {
         write_or_remove(&paths.hooks_path, &hooks_updated)?;
     }
     if config_changed {
-        write_or_remove(&paths.settings_path, &config_updated)?;
+        write_or_remove(&paths.config_path, &config_updated)?;
     }
 
-    let hook_removed = if paths.hook_path.is_file() {
-        fs::remove_file(&paths.hook_path)
-            .map_err(|err| format!("failed to remove {}: {err}", paths.hook_path.display()))?;
-        true
-    } else {
-        false
-    };
-
-    let skill_removed = if paths.skill_path.is_file() {
-        fs::remove_file(&paths.skill_path)
-            .map_err(|err| format!("failed to remove {}: {err}", paths.skill_path.display()))?;
-        let _ = fs::remove_dir(&paths.skill_dir);
-        true
-    } else {
-        false
-    };
+    let (hook_removed, skill_removed) = remove_bundled(&paths.bundled)?;
 
     Ok(RevertResult {
-        config_dir: paths.config_dir,
+        config_dir: paths.bundled.config_dir,
         hook_removed,
         skill_removed,
         hooks_updated: hooks_changed,
@@ -174,23 +128,6 @@ fn rho_home() -> Result<PathBuf, String> {
     dirs::home_dir()
         .ok_or_else(|| "could not resolve the home directory".to_string())
         .map(|home| home.join(".rho"))
-}
-
-fn read_file(path: &Path) -> Result<String, String> {
-    if path.exists() {
-        fs::read_to_string(path).map_err(|err| format!("failed to read {}: {err}", path.display()))
-    } else {
-        Ok(String::new())
-    }
-}
-
-fn write_or_remove(path: &Path, contents: &str) -> Result<(), String> {
-    if contents.trim().is_empty() {
-        let _ = fs::remove_file(path);
-        Ok(())
-    } else {
-        atomic_write(path, contents)
-    }
 }
 
 fn parse_toml(existing: &str, what: &str) -> Result<DocumentMut, String> {
@@ -284,21 +221,12 @@ fn merge_hooks(existing: &str, hook_path: &Path) -> Result<(String, bool), Strin
     let mut doc = parse_toml(existing, "hooks.toml")?;
     require_hooks_version(&doc)?;
 
-    if !existing.trim().is_empty() {
-        if let Some(hook) = doc.get("hook") {
-            if !hook.is_array_of_tables() {
-                return Err(
-                    "invalid Rho hooks.toml; hook must be an array of tables and the file was not changed"
-                        .to_string(),
-                );
-            }
-        }
-        if let Some(tables) = doc.get("hook").and_then(Item::as_array_of_tables) {
-            if tables.iter().any(|table| hook_matches(table, hook_path))
-                && doc.get("version").and_then(Item::as_integer) == Some(1)
-            {
-                return Ok((existing.to_string(), false));
-            }
+    if let Some(hook) = doc.get("hook") {
+        if !hook.is_array_of_tables() {
+            return Err(
+                "invalid Rho hooks.toml; hook must be an array of tables and the file was not changed"
+                    .to_string(),
+            );
         }
     }
 
@@ -320,15 +248,17 @@ fn merge_hooks(existing: &str, hook_path: &Path) -> Result<(String, bool), Strin
                 .to_string()
         })?;
 
-    let mut existing_index = None;
-    for index in 0..hooks.len() {
-        if hooks.get(index).is_some_and(is_memorywhale_hook) {
-            existing_index = Some(index);
-            break;
-        }
-    }
+    let existing_index = hooks.iter().position(is_memorywhale_hook);
     if let Some(index) = existing_index {
-        changed |= apply_hook_fields(hooks.get_mut(index).expect("index from scan"), hook_path);
+        let already_matches = hooks
+            .get(index)
+            .is_some_and(|table| hook_matches(table, hook_path));
+        if !changed && already_matches {
+            return Ok((existing.to_string(), false));
+        }
+        if let Some(table) = hooks.get_mut(index) {
+            changed |= apply_hook_fields(table, hook_path);
+        }
     } else {
         let mut table = Table::new();
         apply_hook_fields(&mut table, hook_path);
@@ -411,46 +341,35 @@ fn require_mcp_tables(doc: &DocumentMut) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_child_table(parent: &mut Table, key: &str, implicit: bool) -> Result<(), String> {
-    match parent.get(key) {
-        None => {
-            let mut child = Table::new();
-            child.set_implicit(implicit);
-            parent.insert(key, Item::Table(child));
-            Ok(())
+fn ensure_child_table<'a>(
+    parent: &'a mut Table,
+    key: &str,
+    implicit: bool,
+) -> Result<&'a mut Table, String> {
+    let needs_insert = match parent.get(key) {
+        None => true,
+        Some(item) if item.is_table() => false,
+        Some(_) => {
+            return Err(format!(
+                "invalid Rho config.toml; {key} must be a table and the file was not changed"
+            ));
         }
-        Some(item) if item.is_table() => Ok(()),
-        Some(_) => Err(format!(
-            "invalid Rho config.toml; {key} must be a table and the file was not changed"
-        )),
+    };
+    if needs_insert {
+        let mut child = Table::new();
+        child.set_implicit(implicit);
+        parent.insert(key, Item::Table(child));
     }
+    Ok(parent
+        .get_mut(key)
+        .and_then(Item::as_table_mut)
+        .expect("child table was just inserted or verified"))
 }
 
 fn memorywhale_server_table(doc: &mut DocumentMut) -> Result<&mut Table, String> {
-    ensure_child_table(doc.as_table_mut(), "mcp", true)?;
-    let mcp = doc
-        .as_table_mut()
-        .get_mut("mcp")
-        .and_then(Item::as_table_mut)
-        .ok_or_else(|| {
-            "invalid Rho config.toml; mcp must be a table and the file was not changed".to_string()
-        })?;
-    ensure_child_table(mcp, "servers", true)?;
-    let servers = mcp
-        .get_mut("servers")
-        .and_then(Item::as_table_mut)
-        .ok_or_else(|| {
-            "invalid Rho config.toml; mcp.servers must be a table and the file was not changed"
-                .to_string()
-        })?;
-    ensure_child_table(servers, "memorywhale", false)?;
-    servers
-        .get_mut("memorywhale")
-        .and_then(Item::as_table_mut)
-        .ok_or_else(|| {
-            "invalid Rho config.toml; mcp.servers.memorywhale must be a table and the file was not changed"
-                .to_string()
-        })
+    let mcp = ensure_child_table(doc.as_table_mut(), "mcp", true)?;
+    let servers = ensure_child_table(mcp, "servers", true)?;
+    ensure_child_table(servers, "memorywhale", false)
 }
 
 fn merge_mcp(existing: &str) -> Result<(String, bool), String> {
@@ -460,12 +379,8 @@ fn merge_mcp(existing: &str) -> Result<(String, bool), String> {
         return Ok((existing.to_string(), false));
     }
     let server = memorywhale_server_table(&mut doc)?;
-    let mut changed = false;
-    changed |= set_string(server, "transport", MCP_TRANSPORT);
-    changed |= set_string(server, "command", MCP_COMMAND);
-    if !changed {
-        return Ok((existing.to_string(), false));
-    }
+    set_string(server, "transport", MCP_TRANSPORT);
+    set_string(server, "command", MCP_COMMAND);
     Ok((doc.to_string(), true))
 }
 
@@ -508,29 +423,12 @@ fn unmerge_mcp(existing: &str) -> Result<(String, bool), String> {
     Ok((doc.to_string(), true))
 }
 
-fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("settings path has no parent: {}", path.display()))?;
-    fs::create_dir_all(parent)
-        .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| format!("settings path has no file name: {}", path.display()))?;
-    let tmp = parent.join(format!(".{}.tmp", file_name.to_string_lossy()));
-    fs::write(&tmp, contents).map_err(|err| format!("failed to write {}: {err}", tmp.display()))?;
-    fs::rename(&tmp, path).map_err(|err| {
-        let _ = fs::remove_file(&tmp);
-        format!("failed to write {}: {err}", path.display())
-    })
-}
-
 fn report_install(result: InstallResult) {
     println!("MemoryWhale installed for Rho.");
     println!("  config:   {}", result.config_dir.display());
     println!("  hook:     {}", result.hook_path.display());
     println!("  hooks:    {}", result.hooks_path.display());
-    println!("  settings: {}", result.settings_path.display());
+    println!("  settings: {}", result.config_path.display());
     println!("  skill:    {}", result.skill_path.display());
     println!("  mcp:      memorywhale registered in config.toml");
     println!("Restart Rho to pick up hook, skill, and MCP changes.");

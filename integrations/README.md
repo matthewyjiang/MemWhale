@@ -85,25 +85,18 @@ A transport-level check is:
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | mw-mcp
 ```
 
-## Claude Code automatic capture
+## Automatic capture
 
-The optional
-[`mw-record.py`](../crates/mw-cli/claude-code/mw-record.py)
-The Claude Code capture hooks record Bash calls through `mw-remember`. They are
-separate from MCP: MCP lets the client retrieve and explicitly save memory,
-while the hook records observed execution.
+MCP lets a client retrieve and explicitly save memory. Capture hooks record
+observed execution and are separate from MCP. Both the hook and the shared
+[`SKILL.md`](../crates/mw-cli/integrate/SKILL.md) require explicit installation
+and neither is needed for ordinary terminal capture.
 
-The optional [`SKILL.md`](../crates/mw-cli/claude-code/SKILL.md)
-teaches Claude Code when to search and save memory. Both require explicit
-installation and neither is needed for ordinary terminal capture.
+The optional Claude Code [`mw-record.py`](../crates/mw-cli/claude-code/mw-record.py)
+records Bash calls through `mw-remember`.
 
-## Rho automatic capture
-
-The optional [`mw-record.py`](../crates/mw-cli/rho/mw-record.py) hook records
-Rho bash and powershell calls through `mw-remember`. It is separate from MCP:
-MCP lets the client retrieve and explicitly save memory, while the hook records
-observed execution. The optional [`SKILL.md`](../crates/mw-cli/rho/SKILL.md)
-teaches Rho when to search and save memory.
+The optional Rho [`mw-record.py`](../crates/mw-cli/rho/mw-record.py) records
+bash and powershell calls through `mw-remember`.
 
 ## Adding or updating an integration
 

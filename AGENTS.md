@@ -67,5 +67,4 @@ Tag related work across terminals with the same `project:<name>` to group it.
   <path>`) or it gets `Killed: 9`. See `DEBUG.md`.
 - Full usage: `docs/reference/cli.md`. Setup/troubleshooting: `DEBUG.md`.
 
-The Claude Code form of this guidance lives in `crates/mw-cli/claude-code/SKILL.md`.
-The Rho form lives in `crates/mw-cli/rho/SKILL.md`.
+The agent form of this guidance lives in `crates/mw-cli/integrate/SKILL.md`.

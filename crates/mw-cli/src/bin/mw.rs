@@ -323,10 +323,10 @@ fn print_help() {
 
 fn integrate_cmd(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
-        Some("claude" | "claude-code") => memorywhale_cli::claude_code::cli(&args[1..]),
-        Some("rho") => memorywhale_cli::rho::cli(&args[1..]),
+        Some("claude" | "claude-code") => memorywhale_cli::integrate::claude::cli(&args[1..]),
+        Some("rho") => memorywhale_cli::integrate::rho::cli(&args[1..]),
         Some("hermes") if args.len() == 1 => {
-            let config_path = memorywhale_cli::hermes::install()?;
+            let config_path = memorywhale_cli::integrate::hermes::install()?;
             println!(
                 "MemoryWhale added to Hermes Agent in {}",
                 config_path.display()

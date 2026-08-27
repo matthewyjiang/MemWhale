@@ -1,8 +1,6 @@
 //! Shared helpers for the MemoryWhale CLI binaries.
 
-pub mod claude_code;
-pub mod hermes;
-pub mod rho;
+pub mod integrate;
 pub mod storage;
 pub mod tui;
 

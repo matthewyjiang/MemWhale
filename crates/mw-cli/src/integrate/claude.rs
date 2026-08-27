@@ -1,29 +1,25 @@
 //! Claude Code integration: capture hook, skill, and MCP registration.
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-// In-crate so they ship inside the published package (same pattern as shell hooks).
-const HOOK_SCRIPT: &str = include_str!("../claude-code/mw-record.py");
-const SKILL: &str = include_str!("../claude-code/SKILL.md");
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+
+use super::files::{
+    atomic_write, install_bundled, parse_revert, read_or_empty, remove_bundled, write_or_remove,
+    BundledLayout,
+};
+
+const HOOK_SCRIPT: &str = include_str!("../../claude-code/mw-record.py");
 
 const MCP_ADD: &str = "claude mcp add --scope user --transport stdio memorywhale -- mw-mcp";
 const MCP_REMOVE: &str = "claude mcp remove --scope user memorywhale";
 
 /// `mw integrate claude [--revert]`
 pub fn cli(args: &[String]) -> Result<(), String> {
-    let mut revert = false;
-    for arg in args {
-        match arg.as_str() {
-            "--revert" => revert = true,
-            _ => return Err("usage: mw integrate claude [--revert]".to_string()),
-        }
-    }
-    if revert {
+    if parse_revert(args, "usage: mw integrate claude [--revert]")? {
         report_revert(uninstall()?);
     } else {
         report_install(install()?);
@@ -59,23 +55,16 @@ enum McpOutcome {
 }
 
 struct ClaudePaths {
-    config_dir: PathBuf,
-    hook_path: PathBuf,
-    skill_path: PathBuf,
-    skill_dir: PathBuf,
+    bundled: BundledLayout,
     settings_path: PathBuf,
 }
 
 impl ClaudePaths {
     fn resolve() -> Result<Self, String> {
-        let config_dir = claude_config_dir()?;
-        let skill_dir = config_dir.join("skills/memorywhale");
+        let bundled = BundledLayout::from_config_dir(claude_config_dir()?);
         Ok(Self {
-            hook_path: config_dir.join("hooks/mw-record.py"),
-            skill_path: skill_dir.join("SKILL.md"),
-            settings_path: config_dir.join("settings.json"),
-            skill_dir,
-            config_dir,
+            settings_path: bundled.config_dir.join("settings.json"),
+            bundled,
         })
     }
 }
@@ -148,26 +137,10 @@ impl HookEntry {
 
 fn install() -> Result<InstallResult, String> {
     let paths = ClaudePaths::resolve()?;
-    let existing = read_settings(&paths.settings_path)?;
-    let (updated, settings_changed) = merge_settings(&existing, &paths.hook_path)?;
+    let existing = read_or_empty(&paths.settings_path)?;
+    let (updated, settings_changed) = merge_settings(&existing, &paths.bundled.hook_path)?;
 
-    let hooks_dir = paths.config_dir.join("hooks");
-    fs::create_dir_all(&hooks_dir)
-        .map_err(|err| format!("failed to create {}: {err}", hooks_dir.display()))?;
-    fs::create_dir_all(&paths.skill_dir)
-        .map_err(|err| format!("failed to create {}: {err}", paths.skill_dir.display()))?;
-
-    fs::write(&paths.hook_path, HOOK_SCRIPT)
-        .map_err(|err| format!("failed to write {}: {err}", paths.hook_path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&paths.hook_path, fs::Permissions::from_mode(0o755))
-            .map_err(|err| format!("failed to chmod {}: {err}", paths.hook_path.display()))?;
-    }
-
-    fs::write(&paths.skill_path, SKILL)
-        .map_err(|err| format!("failed to write {}: {err}", paths.skill_path.display()))?;
+    install_bundled(&paths.bundled, HOOK_SCRIPT, super::SKILL)?;
 
     if settings_changed {
         atomic_write(&paths.settings_path, &updated)?;
@@ -175,16 +148,16 @@ fn install() -> Result<InstallResult, String> {
 
     Ok(InstallResult {
         mcp: register_mcp(),
-        config_dir: paths.config_dir,
-        hook_path: paths.hook_path,
+        config_dir: paths.bundled.config_dir,
+        hook_path: paths.bundled.hook_path,
         settings_path: paths.settings_path,
-        skill_path: paths.skill_path,
+        skill_path: paths.bundled.skill_path,
     })
 }
 
 fn uninstall() -> Result<RevertResult, String> {
     let paths = ClaudePaths::resolve()?;
-    let existing = read_settings(&paths.settings_path)?;
+    let existing = read_or_empty(&paths.settings_path)?;
     let (updated, settings_changed) = if paths.settings_path.exists() {
         unmerge_settings(&existing)?
     } else {
@@ -192,42 +165,14 @@ fn uninstall() -> Result<RevertResult, String> {
     };
 
     if settings_changed {
-        if updated.trim().is_empty() {
-            match fs::remove_file(&paths.settings_path) {
-                Ok(()) => {}
-                Err(err) if err.kind() == ErrorKind::NotFound => {}
-                Err(err) => {
-                    return Err(format!(
-                        "failed to remove {}: {err}",
-                        paths.settings_path.display()
-                    ));
-                }
-            }
-        } else {
-            atomic_write(&paths.settings_path, &updated)?;
-        }
+        write_or_remove(&paths.settings_path, &updated)?;
     }
 
-    let hook_removed = if paths.hook_path.is_file() {
-        fs::remove_file(&paths.hook_path)
-            .map_err(|err| format!("failed to remove {}: {err}", paths.hook_path.display()))?;
-        true
-    } else {
-        false
-    };
-
-    let skill_removed = if paths.skill_path.is_file() {
-        fs::remove_file(&paths.skill_path)
-            .map_err(|err| format!("failed to remove {}: {err}", paths.skill_path.display()))?;
-        let _ = fs::remove_dir(&paths.skill_dir);
-        true
-    } else {
-        false
-    };
+    let (hook_removed, skill_removed) = remove_bundled(&paths.bundled)?;
 
     Ok(RevertResult {
         mcp: unregister_mcp(),
-        config_dir: paths.config_dir,
+        config_dir: paths.bundled.config_dir,
         hook_removed,
         skill_removed,
         settings_updated: settings_changed,
@@ -241,15 +186,6 @@ fn claude_config_dir() -> Result<PathBuf, String> {
     dirs::home_dir()
         .ok_or_else(|| "could not resolve the home directory".to_string())
         .map(|home| home.join(".claude"))
-}
-
-fn read_settings(settings_path: &Path) -> Result<String, String> {
-    if settings_path.exists() {
-        fs::read_to_string(settings_path)
-            .map_err(|err| format!("failed to read {}: {err}", settings_path.display()))
-    } else {
-        Ok(String::new())
-    }
 }
 
 fn hook_command(hook_path: &Path) -> String {
@@ -350,38 +286,6 @@ fn unmerge_settings(existing: &str) -> Result<(String, bool), String> {
     Ok((serialize_settings(&root)?, true))
 }
 
-fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("settings path has no parent: {}", path.display()))?;
-    fs::create_dir_all(parent)
-        .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| format!("settings path has no file name: {}", path.display()))?;
-    let tmp = parent.join(format!(
-        ".{}.tmp.{}",
-        file_name.to_string_lossy(),
-        std::process::id()
-    ));
-    fs::write(&tmp, contents).map_err(|err| format!("failed to write {}: {err}", tmp.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = path
-            .metadata()
-            .map(|meta| meta.permissions().mode())
-            .unwrap_or(0o600);
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
-            .map_err(|err| format!("failed to set permissions on {}: {err}", tmp.display()))?;
-    }
-    if let Err(err) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(format!("failed to write {}: {err}", path.display()));
-    }
-    Ok(())
-}
-
 const MCP_SERVER_NAME: &str = "memorywhale";
 
 fn user_scoped_mcp_config_path_from(
@@ -406,7 +310,7 @@ fn user_scoped_mcp_registered(server_name: &str) -> bool {
     let Some(path) = user_scoped_mcp_config_path() else {
         return false;
     };
-    let Ok(content) = fs::read_to_string(&path) else {
+    let Ok(content) = std::fs::read_to_string(&path) else {
         return false;
     };
     user_scoped_mcp_registered_in_config(&content, server_name)
@@ -719,6 +623,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn atomic_write_preserves_existing_file_permissions() {
+        use std::fs;
         use std::os::unix::fs::PermissionsExt;
 
         let dir = std::env::temp_dir().join(format!(

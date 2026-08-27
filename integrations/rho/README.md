@@ -44,8 +44,8 @@ That copies the capture hook and skill into `~/.rho/` (or `$RHO_HOME`), merges
 the MemoryWhale hook into `hooks.toml`, and registers `mw-mcp` in
 `config.toml`. Restart Rho afterward. To undo: `mw integrate rho --revert`.
 
-The bundled hook and skill live in `crates/mw-cli/rho/` so they ship inside the
-published package.
+The bundled hook lives in `crates/mw-cli/rho/` and the skill in
+`crates/mw-cli/integrate/` so they ship inside the published package.
 
 ### Manual setup
 
@@ -111,7 +111,7 @@ so a broken hook would deny the tool call.
 
 ```bash
 mkdir -p ~/.rho/skills/memorywhale
-cp crates/mw-cli/rho/SKILL.md ~/.rho/skills/memorywhale/SKILL.md
+cp crates/mw-cli/integrate/SKILL.md ~/.rho/skills/memorywhale/SKILL.md
 ```
 
 Rho loads personal skills from `~/.rho/skills/<name>/SKILL.md`. The directory
