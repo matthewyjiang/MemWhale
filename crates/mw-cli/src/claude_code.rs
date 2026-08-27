@@ -193,7 +193,16 @@ fn uninstall() -> Result<RevertResult, String> {
 
     if settings_changed {
         if updated.trim().is_empty() {
-            let _ = fs::remove_file(&paths.settings_path);
+            match fs::remove_file(&paths.settings_path) {
+                Ok(()) => {}
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(format!(
+                        "failed to remove {}: {err}",
+                        paths.settings_path.display()
+                    ));
+                }
+            }
         } else {
             atomic_write(&paths.settings_path, &updated)?;
         }
@@ -274,13 +283,24 @@ fn serialize_settings(root: &ClaudeSettings) -> Result<String, String> {
 }
 
 fn upsert_bash_hook(groups: &mut Vec<HookGroup>, entry: HookEntry) {
+    for group in groups.iter_mut() {
+        if group.matcher.as_deref() != Some("Bash") {
+            continue;
+        }
+        if let Some(list) = group.hooks.as_mut() {
+            list.retain(|hook| !hook.is_memorywhale());
+        }
+    }
+    groups.retain(|group| {
+        group.matcher.as_deref() != Some("Bash")
+            || group.hooks.as_ref().is_some_and(|list| !list.is_empty())
+    });
+
     if let Some(group) = groups
         .iter_mut()
         .find(|group| group.matcher.as_deref() == Some("Bash"))
     {
-        let list = group.hooks.get_or_insert_with(Vec::new);
-        list.retain(|hook| !hook.is_memorywhale());
-        list.push(entry);
+        group.hooks.get_or_insert_with(Vec::new).push(entry);
     } else {
         groups.push(HookGroup {
             matcher: Some("Bash".to_string()),
@@ -350,59 +370,90 @@ fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
     let file_name = path
         .file_name()
         .ok_or_else(|| format!("settings path has no file name: {}", path.display()))?;
-    let tmp = parent.join(format!(".{}.tmp", file_name.to_string_lossy()));
+    let tmp = parent.join(format!(
+        ".{}.tmp.{}",
+        file_name.to_string_lossy(),
+        std::process::id()
+    ));
     fs::write(&tmp, contents).map_err(|err| format!("failed to write {}: {err}", tmp.display()))?;
-    fs::rename(&tmp, path).map_err(|err| {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = path
+            .metadata()
+            .map(|meta| meta.permissions().mode())
+            .unwrap_or(0o600);
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
+            .map_err(|err| format!("failed to set permissions on {}: {err}", tmp.display()))?;
+    }
+    if let Err(err) = fs::rename(&tmp, path) {
         let _ = fs::remove_file(&tmp);
-        format!("failed to write {}: {err}", path.display())
-    })
+        return Err(format!("failed to write {}: {err}", path.display()));
+    }
+    Ok(())
+}
+
+const MCP_SERVER_NAME: &str = "memorywhale";
+
+/// User-scoped MCP servers live in the top-level `mcpServers` map in `~/.claude.json`.
+/// `claude mcp get` resolves the highest-precedence definition across scopes, so it
+/// cannot tell us whether the user-scoped entry exists.
+fn user_scoped_mcp_registered(server_name: &str) -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    let path = home.join(".claude.json");
+    let Ok(content) = fs::read_to_string(&path) else {
+        return false;
+    };
+    user_scoped_mcp_registered_in_config(&content, server_name)
+}
+
+fn user_scoped_mcp_registered_in_config(content: &str, server_name: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(content) else {
+        return false;
+    };
+    value
+        .get("mcpServers")
+        .and_then(|servers| servers.get(server_name))
+        .is_some()
 }
 
 fn register_mcp() -> McpOutcome {
+    if user_scoped_mcp_registered(MCP_SERVER_NAME) {
+        return McpOutcome::Unchanged;
+    }
     match Command::new("claude")
-        .args(["mcp", "get", "memorywhale"])
-        .output()
+        .args([
+            "mcp",
+            "add",
+            "--scope",
+            "user",
+            "--transport",
+            "stdio",
+            MCP_SERVER_NAME,
+            "--",
+            "mw-mcp",
+        ])
+        .status()
     {
-        Ok(output) if output.status.success() => McpOutcome::Unchanged,
+        Ok(status) if status.success() => McpOutcome::Changed,
         Err(err) if err.kind() == ErrorKind::NotFound => McpOutcome::CliMissing,
-        Err(_) => McpOutcome::Failed,
-        Ok(_) => match Command::new("claude")
-            .args([
-                "mcp",
-                "add",
-                "--scope",
-                "user",
-                "--transport",
-                "stdio",
-                "memorywhale",
-                "--",
-                "mw-mcp",
-            ])
-            .status()
-        {
-            Ok(status) if status.success() => McpOutcome::Changed,
-            Err(err) if err.kind() == ErrorKind::NotFound => McpOutcome::CliMissing,
-            _ => McpOutcome::Failed,
-        },
+        _ => McpOutcome::Failed,
     }
 }
 
 fn unregister_mcp() -> McpOutcome {
+    if !user_scoped_mcp_registered(MCP_SERVER_NAME) {
+        return McpOutcome::Unchanged;
+    }
     match Command::new("claude")
-        .args(["mcp", "get", "memorywhale"])
-        .output()
+        .args(["mcp", "remove", "--scope", "user", MCP_SERVER_NAME])
+        .status()
     {
-        Ok(output) if output.status.success() => match Command::new("claude")
-            .args(["mcp", "remove", "--scope", "user", "memorywhale"])
-            .status()
-        {
-            Ok(status) if status.success() => McpOutcome::Changed,
-            Err(err) if err.kind() == ErrorKind::NotFound => McpOutcome::CliMissing,
-            _ => McpOutcome::Failed,
-        },
-        Ok(_) => McpOutcome::Unchanged,
+        Ok(status) if status.success() => McpOutcome::Changed,
         Err(err) if err.kind() == ErrorKind::NotFound => McpOutcome::CliMissing,
-        Err(_) => McpOutcome::Failed,
+        _ => McpOutcome::Failed,
     }
 }
 
@@ -589,6 +640,88 @@ mod tests {
         let (updated, changed) = unmerge_settings(original).unwrap();
         assert!(!changed);
         assert_eq!(updated, original);
+    }
+
+    #[test]
+    fn merge_settings_deduplicates_memorywhale_hooks_across_bash_groups() {
+        let hook = PathBuf::from("/tmp/.claude/hooks/mw-record.py");
+        let existing = r#"{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "echo first"}]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "python3 \"/old/.claude/hooks/mw-record.py\""}]
+      }
+    ]
+  }
+}"#;
+        let (merged, changed) = merge_settings(existing, &hook).unwrap();
+        assert!(changed);
+        let parsed = serde_json::from_str::<Value>(&merged).unwrap();
+        let groups = parsed["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|group| group.get("matcher") == Some(&json!("Bash")))
+            .collect::<Vec<_>>();
+        assert_eq!(groups.len(), 1);
+        let commands = groups[0]["hooks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|hook| hook["command"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(commands, vec!["echo first", hook_command(&hook).as_str()]);
+    }
+
+    #[test]
+    fn user_scoped_mcp_registered_in_config_reads_top_level_servers_only() {
+        let config = r#"{
+  "projects": {
+    "/tmp/repo": {
+      "mcpServers": {
+        "memorywhale": {"command": "mw-mcp"}
+      }
+    }
+  }
+}"#;
+        assert!(!user_scoped_mcp_registered_in_config(config, "memorywhale"));
+
+        let config = r#"{
+  "mcpServers": {
+    "memorywhale": {"command": "mw-mcp", "args": []}
+  }
+}"#;
+        assert!(user_scoped_mcp_registered_in_config(config, "memorywhale"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "mw-claude-perms-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let settings = dir.join("settings.json");
+        fs::write(&settings, r#"{"theme":"dark"}"#).unwrap();
+        fs::set_permissions(&settings, fs::Permissions::from_mode(0o600)).unwrap();
+
+        atomic_write(&settings, r#"{"theme":"light"}"#).unwrap();
+
+        assert_eq!(
+            fs::metadata(&settings).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

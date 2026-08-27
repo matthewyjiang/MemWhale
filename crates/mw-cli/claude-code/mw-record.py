@@ -14,11 +14,13 @@ so a MemoryWhale hiccup can't block your agent session.
 Install: `mw integrate claude` (see integrations/claude-code/README.md).
 """
 import json
+import re
 import subprocess
 import sys
 import shutil
 
 MAX_OUTPUT = 20_000  # cap what we pass as args; mw-remember still redacts secrets
+EXIT_CODE_RE = re.compile(r"(?:exit(?:\s+|-)?code\s*[:=]?\s*|exited with code\s+)(\d+)", re.I)
 
 
 def first(d, *keys, default=""):
@@ -27,6 +29,27 @@ def first(d, *keys, default=""):
         if v:
             return v
     return default
+
+
+def bash_exit_code(payload, tool_response=None):
+    """Return a Bash process exit code only when the payload provides one."""
+    for source in (payload, tool_response or {}):
+        for key in ("exit_code", "exitCode", "return_code", "returnCode"):
+            value = source.get(key)
+            if value is None or value == "":
+                continue
+            try:
+                code = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= code <= 255:
+                return str(code)
+
+    error_text = str(payload.get("error", ""))
+    match = EXIT_CODE_RE.search(error_text)
+    if match:
+        return match.group(1)
+    return None
 
 
 def main():
@@ -45,10 +68,11 @@ def main():
 
     cwd = payload.get("cwd") or tool_input.get("cwd") or ""
     event = payload.get("hook_event_name", "")
+    exit_code = None
     if event == "PostToolUseFailure":
         stdout = ""
         stderr = str(payload.get("error", ""))[:MAX_OUTPUT]
-        exit_code = "1"
+        exit_code = bash_exit_code(payload)
     else:
         tool_response = payload.get("tool_response") or {}
         stdout = str(first(tool_response, "stdout", "output"))[:MAX_OUTPUT]
@@ -58,24 +82,26 @@ def main():
             or tool_response.get("isError")
             or tool_response.get("interrupted")
         )
-        exit_code = "1" if is_error else "0"
+        exit_code = bash_exit_code(payload, tool_response) or ("1" if is_error else "0")
 
     mw_remember = shutil.which("mw-remember")
     if not mw_remember:
         return  # MemoryWhale not installed/on PATH — silently skip
 
+    remember_args = [
+        mw_remember,
+        "--cwd", cwd,
+        "--stdout", stdout,
+        "--stderr", stderr,
+        "--notes", "agent:claude-code",
+    ]
+    if exit_code is not None:
+        remember_args.extend(["--exit-code", exit_code])
+    remember_args.extend(["--", command])
+
     try:
         subprocess.run(
-            [
-                mw_remember,
-                "--cwd", cwd,
-                "--exit-code", exit_code,
-                "--stdout", stdout,
-                "--stderr", stderr,
-                "--notes", "agent:claude-code",
-                "--",
-                command,
-            ],
+            remember_args,
             capture_output=True,
             timeout=10,
         )
@@ -100,7 +126,8 @@ def _selftest():
         "tool_input": {"command": "false"},
         "error": "Exit code 1",
     }
-    assert failure_payload["hook_event_name"] == "PostToolUseFailure"
+    assert bash_exit_code(failure_payload) == "1"
+    assert bash_exit_code({"error": "permission denied before launch"}) is None
 
     print("mw-record.py: selftest OK")
 
