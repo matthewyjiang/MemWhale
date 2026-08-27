@@ -66,10 +66,7 @@ fn user_can_install_memorywhale_into_a_fresh_claude_config() {
         .expect("missing Bash hook group");
     let command = bash_group["hooks"][0]["command"].as_str().unwrap();
     assert!(command.contains("mw-remember"), "command: {command}");
-    assert!(
-        command.contains("--from-hook claude"),
-        "command: {command}"
-    );
+    assert!(command.contains("--from-hook claude"), "command: {command}");
     assert!(!command.contains("python3"), "command: {command}");
     let failure_group = settings["hooks"]["PostToolUseFailure"]
         .as_array()
@@ -79,8 +76,7 @@ fn user_can_install_memorywhale_into_a_fresh_claude_config() {
         .expect("missing Bash PostToolUseFailure hook group");
     let failure_command = failure_group["hooks"][0]["command"].as_str().unwrap();
     assert!(
-        failure_command.contains("mw-remember")
-            && failure_command.contains("--from-hook claude"),
+        failure_command.contains("mw-remember") && failure_command.contains("--from-hook claude"),
         "command: {failure_command}"
     );
     assert!(
