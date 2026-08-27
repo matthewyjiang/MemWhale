@@ -11,6 +11,8 @@ use serde_json::Value;
 use crate::remember::CommandRecord;
 
 const MAX_OUTPUT: usize = 20_000;
+const RHO_NO_COMMAND: &str = "[rho:after_tool_use]";
+const RHO_TRUNCATION_NOTE: &str = "[rho: upstream truncation; affected fields omitted]";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Agent {
@@ -124,52 +126,134 @@ fn rho(payload: &Value) -> Option<CommandRecord> {
         return None;
     }
 
+    let truncated = rho_truncated_fields(payload);
     let status = body.get("status").and_then(Value::as_str).unwrap_or("");
     let failed = !status.is_empty() && status != "succeeded";
-    let mut command = command_from(body);
-    if command.is_empty() {
-        if !failed {
-            return None;
-        }
-        command = tool_name.to_string();
+    let command = if rho_field_truncated(&truncated, "payload.capability.shell_command") {
+        String::new()
+    } else {
+        command_from(body)
+    };
+    if command.is_empty() && !failed {
+        return None;
     }
 
-    let cwd = cwd_from(payload, body);
+    let cwd = if rho_field_truncated(&truncated, "workspace.root")
+        || rho_field_truncated(&truncated, "payload.capability.working_directory")
+    {
+        None
+    } else {
+        cwd_from(payload, body)
+    };
     let failure = as_object(body.get("failure"));
-    let kind = failure
-        .and_then(|failure| failure.get("kind"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    let message = failure
-        .and_then(|failure| failure.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    let stderr = truncate(if !kind.is_empty() && !message.is_empty() {
+    let kind = if rho_field_truncated(&truncated, "payload.failure.kind") {
+        String::new()
+    } else {
+        failure
+            .and_then(|failure| failure.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let message = if rho_field_truncated(&truncated, "payload.failure.message") {
+        String::new()
+    } else {
+        failure
+            .and_then(|failure| failure.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let mut stderr = truncate(if !kind.is_empty() && !message.is_empty() {
         format!("{kind}: {message}")
     } else if !kind.is_empty() {
-        kind.to_string()
+        kind.clone()
     } else {
-        message.to_string()
+        message.clone()
     });
-    let exit_code = if status.is_empty() {
-        None
-    } else if failed {
-        Some(1)
-    } else {
-        Some(0)
-    };
+    if rho_used_field_truncated(payload, &truncated) {
+        if !stderr.is_empty() {
+            stderr.push('\n');
+        }
+        stderr.push_str(RHO_TRUNCATION_NOTE);
+    }
+
+    let mut notes = String::from("agent:rho");
+    if !status.is_empty() {
+        notes.push_str(" status:");
+        notes.push_str(status);
+    }
+    if command.is_empty() {
+        notes.push_str(" command:unknown");
+    }
 
     Some(CommandRecord {
         cwd,
-        exit_code,
+        exit_code: None,
         stdout: String::new(),
         stderr,
-        notes: "agent:rho".to_string(),
-        command_parts: vec![command],
+        notes,
+        command_parts: if command.is_empty() {
+            vec![RHO_NO_COMMAND.to_string()]
+        } else {
+            vec![command]
+        },
         capture_kind: "full".to_string(),
     })
+}
+
+fn rho_truncated_fields(payload: &Value) -> Vec<String> {
+    let Some(bounds) = payload.get("bounds") else {
+        return Vec::new();
+    };
+    if !bounds
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Vec::new();
+    }
+    bounds
+        .get("fields")
+        .and_then(Value::as_array)
+        .map(|fields| {
+            fields
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn rho_field_truncated(truncated: &[String], path: &str) -> bool {
+    truncated.iter().any(|field| field == path)
+}
+
+fn rho_used_field_truncated(payload: &Value, truncated: &[String]) -> bool {
+    if truncated.is_empty() {
+        return false;
+    }
+    let body = payload
+        .get("payload")
+        .and_then(Value::as_object)
+        .or_else(|| payload.as_object());
+    let mut watched = vec![
+        "workspace.root",
+        "payload.capability.shell_command",
+        "payload.capability.working_directory",
+        "payload.failure.kind",
+        "payload.failure.message",
+    ];
+    if body.is_some_and(|body| body.contains_key("capability")) {
+        watched.push("payload.capability.executable");
+        watched.push("payload.capability.arguments");
+    }
+    truncated
+        .iter()
+        .any(|field| watched.iter().any(|path| path == field))
 }
 
 fn command_from(body: &serde_json::Map<String, Value>) -> String {
@@ -375,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn rho_failed_call_without_command_uses_tool_name() {
+    fn rho_failed_call_without_command_preserves_tool_status() {
         let record = rho(json!({
             "schema_version": 2,
             "event": "after_tool_use",
@@ -388,11 +472,52 @@ mod tests {
             }
         }))
         .unwrap();
-        assert_eq!(record.command_parts, ["bash"]);
+        assert_eq!(record.command_parts, [RHO_NO_COMMAND]);
         assert_eq!(record.cwd.as_deref(), Some("/work"));
         assert_eq!(record.stderr, "tool: exit 1");
-        assert_eq!(record.exit_code, Some(1));
-        assert_eq!(record.notes, "agent:rho");
+        assert!(record.exit_code.is_none());
+        assert!(record.notes.contains("status:failed"));
+        assert!(record.notes.contains("command:unknown"));
+    }
+
+    #[test]
+    fn rho_unavailable_without_command_preserves_status() {
+        let record = rho(json!({
+            "event": "after_tool_use",
+            "payload": {
+                "tool": {"name": "powershell"},
+                "status": "unavailable",
+                "failure": {"kind": "runtime_shutdown", "message": "host stopped"}
+            }
+        }))
+        .unwrap();
+        assert_eq!(record.command_parts, [RHO_NO_COMMAND]);
+        assert_eq!(record.stderr, "runtime_shutdown: host stopped");
+        assert!(record.exit_code.is_none());
+        assert!(record.notes.contains("status:unavailable"));
+    }
+
+    #[test]
+    fn rho_omits_truncated_workspace_and_failure_fields() {
+        let record = rho(json!({
+            "event": "after_tool_use",
+            "workspace": {"root": "/very/long/path"},
+            "bounds": {
+                "truncated": true,
+                "fields": ["workspace.root", "payload.failure.message"]
+            },
+            "payload": {
+                "tool": {"name": "bash"},
+                "status": "failed",
+                "failure": {"kind": "tool", "message": "partial error text"}
+            }
+        }))
+        .unwrap();
+        assert!(record.cwd.is_none());
+        assert_eq!(
+            record.stderr,
+            "tool\n[rho: upstream truncation; affected fields omitted]"
+        );
     }
 
     #[test]
@@ -413,7 +538,7 @@ mod tests {
         .unwrap();
         assert_eq!(record.command_parts, ["cargo test"]);
         assert_eq!(record.cwd.as_deref(), Some("/tmp"));
-        assert_eq!(record.exit_code, Some(0));
+        assert!(record.exit_code.is_none());
     }
 
     #[test]

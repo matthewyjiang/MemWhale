@@ -94,9 +94,10 @@ and neither is needed for ordinary terminal capture.
 
 Claude Code and Rho capture hooks spawn `mw-remember --from-hook claude`
 or `mw-remember --from-hook rho`. That binary reads the named client's
-hook JSON from stdin and records matching bash/powershell calls. Failed
-Rho calls are still recorded with failure metadata even when the payload
-has no command text.
+hook JSON from stdin and records matching bash/powershell calls when command
+text is present. Failed or unavailable Rho calls without command text are
+still recorded with status and failure metadata under a sentinel command,
+without inventing a shell command or exit code.
 
 ## Adding or updating an integration
 

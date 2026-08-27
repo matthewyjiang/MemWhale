@@ -85,16 +85,18 @@ fn from_hook_records_a_rho_failure_without_command_text() {
     assert!(output.status.success(), "{output:?}");
 
     let conn = memorywhale_cli::storage::open_path(&data_dir.join("memorywhale.sqlite3")).unwrap();
-    let (command, exit_code, notes): (String, i64, String) = conn
+    let (command, exit_code, notes): (String, Option<i64>, String) = conn
         .query_row(
             "SELECT command, exit_code, notes FROM command_runs",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
-    assert_eq!(command, "bash");
-    assert_eq!(exit_code, 1);
+    assert_eq!(command, "[rho:after_tool_use]");
+    assert!(exit_code.is_none());
     assert!(notes.contains("agent:rho"), "{notes}");
+    assert!(notes.contains("status:failed"), "{notes}");
+    assert!(notes.contains("command:unknown"), "{notes}");
 }
 
 #[test]

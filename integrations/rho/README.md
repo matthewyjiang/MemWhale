@@ -152,11 +152,15 @@ text when the payload includes it, along with working directory and exit
 status when available.
 
 Rho's current `after_tool_use` payload reports tool name, status, failure
-kind and message, and duration. It does not include the shell command or stdout.
-The hook records failed calls even without command text, using the tool name
-and failure metadata so the error is kept. It reads `capability.shell_command`
-if a later schema adds it. Successful calls with no command text are skipped so
-the store is not filled with bare `bash` rows.
+kind and message, and duration. It does not include the shell command, process
+exit code, or stdout. The hook records failed or unavailable calls even without
+command text, using a sentinel command (`[rho:after_tool_use]`) plus status and
+failure metadata in notes and stderr so the event is kept without inventing a
+shell command. It reads `capability.shell_command` if a later schema adds it.
+Successful calls with no command text are skipped so the store is not filled
+with bare tool-name rows. Upstream truncation reported in `bounds` omits
+affected fields and adds a marker instead of presenting shortened text as
+complete evidence.
 
 Commands run in an ordinary terminal are captured only through MemoryWhale's
 normal terminal capture paths. MCP access alone is not automatic capture.

@@ -327,28 +327,50 @@ fn user_scoped_mcp_config_path() -> Option<PathBuf> {
 /// With the default config dir that file is `~/.claude.json`; when `CLAUDE_CONFIG_DIR`
 /// is set, Claude Code stores it at `$CLAUDE_CONFIG_DIR/.claude.json` instead.
 fn user_scoped_mcp_registered(server_name: &str) -> bool {
-    let Some(path) = user_scoped_mcp_config_path() else {
-        return false;
-    };
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return false;
-    };
-    user_scoped_mcp_registered_in_config(&content, server_name)
+    user_scoped_mcp_entry(server_name).is_some_and(|entry| mcp_server_entry_matches(&entry))
 }
 
-fn user_scoped_mcp_registered_in_config(content: &str, server_name: &str) -> bool {
-    let Ok(value) = serde_json::from_str::<Value>(content) else {
-        return false;
-    };
+fn user_scoped_mcp_entry(server_name: &str) -> Option<Value> {
+    let path = user_scoped_mcp_config_path()?;
+    let content = std::fs::read_to_string(&path).ok()?;
+    user_scoped_mcp_entry_in_config(&content, server_name)
+}
+
+fn user_scoped_mcp_entry_in_config(content: &str, server_name: &str) -> Option<Value> {
+    let value = serde_json::from_str::<Value>(content).ok()?;
     value
         .get("mcpServers")
         .and_then(|servers| servers.get(server_name))
-        .is_some()
+        .cloned()
+}
+
+fn mcp_server_entry_matches(entry: &Value) -> bool {
+    let Some(server) = entry.as_object() else {
+        return false;
+    };
+    if server.get("command").and_then(Value::as_str) != Some("mw-mcp") {
+        return false;
+    }
+    match server.get("args") {
+        None => true,
+        Some(Value::Array(args)) => args.is_empty(),
+        Some(_) => false,
+    }
 }
 
 fn register_mcp() -> McpOutcome {
     if user_scoped_mcp_registered(MCP_SERVER_NAME) {
         return McpOutcome::Unchanged;
+    }
+    if user_scoped_mcp_entry(MCP_SERVER_NAME).is_some() {
+        match Command::new("claude")
+            .args(["mcp", "remove", "--scope", "user", MCP_SERVER_NAME])
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Err(err) if err.kind() == ErrorKind::NotFound => return McpOutcome::CliMissing,
+            _ => return McpOutcome::Failed,
+        }
     }
     match Command::new("claude")
         .args([
@@ -371,7 +393,7 @@ fn register_mcp() -> McpOutcome {
 }
 
 fn unregister_mcp() -> McpOutcome {
-    if !user_scoped_mcp_registered(MCP_SERVER_NAME) {
+    if user_scoped_mcp_entry(MCP_SERVER_NAME).is_none() {
         return McpOutcome::Unchanged;
     }
     match Command::new("claude")
@@ -634,14 +656,39 @@ mod tests {
     }
   }
 }"#;
-        assert!(!user_scoped_mcp_registered_in_config(config, "memorywhale"));
+        assert!(user_scoped_mcp_entry_in_config(config, "memorywhale").is_none());
 
         let config = r#"{
   "mcpServers": {
     "memorywhale": {"command": "mw-mcp", "args": []}
   }
 }"#;
-        assert!(user_scoped_mcp_registered_in_config(config, "memorywhale"));
+        let entry = user_scoped_mcp_entry_in_config(config, "memorywhale").unwrap();
+        assert!(mcp_server_entry_matches(&entry));
+        assert!(user_scoped_mcp_registered_in_config_matches(
+            config,
+            "memorywhale"
+        ));
+    }
+
+    #[test]
+    fn user_scoped_mcp_registered_rejects_stale_command() {
+        let config = r#"{
+  "mcpServers": {
+    "memorywhale": {"command": "/missing/mw-mcp"}
+  }
+}"#;
+        let entry = user_scoped_mcp_entry_in_config(config, "memorywhale").unwrap();
+        assert!(!mcp_server_entry_matches(&entry));
+        assert!(!user_scoped_mcp_registered_in_config_matches(
+            config,
+            "memorywhale"
+        ));
+    }
+
+    fn user_scoped_mcp_registered_in_config_matches(content: &str, server_name: &str) -> bool {
+        user_scoped_mcp_entry_in_config(content, server_name)
+            .is_some_and(|entry| mcp_server_entry_matches(&entry))
     }
 
     #[cfg(unix)]
