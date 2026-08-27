@@ -348,6 +348,14 @@ fn mcp_server_entry_matches(entry: &Value) -> bool {
     let Some(server) = entry.as_object() else {
         return false;
     };
+    if server.contains_key("url") {
+        return false;
+    }
+    match server.get("type").and_then(Value::as_str) {
+        None | Some("stdio") => {}
+        Some("streamable-http") | Some("http") | Some("sse") | Some("ws") => return false,
+        Some(_) => return false,
+    }
     if server.get("command").and_then(Value::as_str) != Some("mw-mcp") {
         return false;
     }
@@ -676,6 +684,26 @@ mod tests {
         let config = r#"{
   "mcpServers": {
     "memorywhale": {"command": "/missing/mw-mcp"}
+  }
+}"#;
+        let entry = user_scoped_mcp_entry_in_config(config, "memorywhale").unwrap();
+        assert!(!mcp_server_entry_matches(&entry));
+        assert!(!user_scoped_mcp_registered_in_config_matches(
+            config,
+            "memorywhale"
+        ));
+    }
+
+    #[test]
+    fn user_scoped_mcp_registered_rejects_non_stdio_transport() {
+        let config = r#"{
+  "mcpServers": {
+    "memorywhale": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "command": "mw-mcp",
+      "args": []
+    }
   }
 }"#;
         let entry = user_scoped_mcp_entry_in_config(config, "memorywhale").unwrap();
