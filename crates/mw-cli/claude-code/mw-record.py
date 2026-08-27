@@ -31,9 +31,13 @@ def first(d, *keys, default=""):
     return default
 
 
+def as_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
 def bash_exit_code(payload, tool_response=None):
     """Return a Bash process exit code only when the payload provides one."""
-    for source in (payload, tool_response or {}):
+    for source in (as_dict(payload), as_dict(tool_response)):
         for key in ("exit_code", "exitCode", "return_code", "returnCode"):
             value = source.get(key)
             if value is None or value == "":
@@ -63,11 +67,14 @@ def main():
     except Exception:
         return  # not JSON, or nothing to read — nothing to record
 
+    if not isinstance(payload, dict):
+        return
+
     if payload.get("tool_name") != "Bash":
         return
 
-    tool_input = payload.get("tool_input") or {}
-    command = tool_input.get("command", "").strip()
+    tool_input = as_dict(payload.get("tool_input"))
+    command = str(tool_input.get("command") or "").strip()
     if not command:
         return
 
@@ -79,7 +86,7 @@ def main():
         stderr = str(payload.get("error", ""))[:MAX_OUTPUT]
         exit_code = bash_exit_code(payload)
     else:
-        tool_response = payload.get("tool_response") or {}
+        tool_response = as_dict(payload.get("tool_response"))
         stdout = str(first(tool_response, "stdout", "output"))[:MAX_OUTPUT]
         stderr = str(first(tool_response, "stderr"))[:MAX_OUTPUT]
         is_error = bool(
@@ -141,4 +148,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
         _selftest()
     else:
-        main()
+        try:
+            main()
+        except Exception:
+            pass  # never let a recording failure interrupt the agent

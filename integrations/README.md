@@ -96,7 +96,8 @@ The optional Claude Code [`mw-record.py`](../crates/mw-cli/claude-code/mw-record
 records Bash calls through `mw-remember`.
 
 The optional Rho [`mw-record.py`](../crates/mw-cli/rho/mw-record.py) records
-bash and powershell calls through `mw-remember`.
+bash and powershell tool calls through `mw-remember` when the hook payload
+includes command text; failed calls are still recorded with failure metadata.
 
 ## Adding or updating an integration
 

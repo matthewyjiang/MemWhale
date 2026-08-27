@@ -78,7 +78,7 @@ def main():
         return
 
     status = str(body.get("status") or "")
-    failed = status != "succeeded"
+    failed = bool(status) and status != "succeeded"
     command = command_from(body)
     if not command:
         if not failed:
@@ -87,26 +87,35 @@ def main():
 
     cwd = cwd_from(payload, body)
     failure = as_dict(body.get("failure"))
-    stderr = str(failure.get("message") or "")[:MAX_OUTPUT]
+    kind = str(failure.get("kind") or "").strip()
+    message = str(failure.get("message") or "").strip()
+    if kind and message:
+        stderr = f"{kind}: {message}"[:MAX_OUTPUT]
+    elif kind:
+        stderr = kind[:MAX_OUTPUT]
+    else:
+        stderr = message[:MAX_OUTPUT]
     stdout = ""
-    exit_code = "1" if failed else "0"
+    exit_code = None if not status else ("1" if failed else "0")
 
     mw_remember = shutil.which("mw-remember")
     if not mw_remember:
         return  # MemoryWhale not installed/on PATH — silently skip
 
+    remember_args = [
+        mw_remember,
+        "--cwd", cwd,
+        "--stdout", stdout,
+        "--stderr", stderr,
+        "--notes", "agent:rho",
+    ]
+    if exit_code is not None:
+        remember_args.extend(["--exit-code", exit_code])
+    remember_args.extend(["--", command])
+
     try:
         subprocess.run(
-            [
-                mw_remember,
-                "--cwd", cwd,
-                "--exit-code", exit_code,
-                "--stdout", stdout,
-                "--stderr", stderr,
-                "--notes", "agent:rho",
-                "--",
-                command,
-            ],
+            remember_args,
             capture_output=True,
             timeout=10,
         )

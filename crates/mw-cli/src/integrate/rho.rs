@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table};
+use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, TableLike};
 
 use super::files::{
     atomic_write, install_bundled, parse_revert, read_or_empty, remove_bundled, write_or_remove,
@@ -155,11 +155,11 @@ fn string_array(table: &Table, key: &str) -> Option<Vec<String>> {
         })
 }
 
-fn set_string(table: &mut Table, key: &str, expected: &str) -> bool {
+fn set_string(table: &mut dyn TableLike, key: &str, expected: &str) -> bool {
     if table.get(key).and_then(|item| item.as_str()) == Some(expected) {
         return false;
     }
-    table[key] = value(expected);
+    table.insert(key, value(expected));
     true
 }
 
@@ -303,33 +303,37 @@ fn unmerge_hooks(existing: &str) -> Result<(String, bool), String> {
 }
 
 fn mcp_server_matches(doc: &DocumentMut) -> bool {
+    memorywhale_server(doc).is_some_and(|server| {
+        server.get("transport").and_then(Item::as_str) == Some(MCP_TRANSPORT)
+            && server.get("command").and_then(Item::as_str) == Some(MCP_COMMAND)
+            && server.get("enabled").and_then(Item::as_bool) != Some(false)
+    })
+}
+
+fn memorywhale_server(doc: &DocumentMut) -> Option<&dyn TableLike> {
     doc.get("mcp")
         .and_then(|mcp| mcp.get("servers"))
         .and_then(|servers| servers.get("memorywhale"))
-        .and_then(Item::as_table)
-        .is_some_and(|server| {
-            server.get("transport").and_then(Item::as_str) == Some(MCP_TRANSPORT)
-                && server.get("command").and_then(Item::as_str) == Some(MCP_COMMAND)
-        })
+        .and_then(Item::as_table_like)
 }
 
 fn require_mcp_tables(doc: &DocumentMut) -> Result<(), String> {
     if let Some(mcp) = doc.get("mcp") {
-        if !mcp.is_table() {
+        if !mcp.is_table_like() {
             return Err(
                 "invalid Rho config.toml; mcp must be a table and the file was not changed"
                     .to_string(),
             );
         }
         if let Some(servers) = mcp.get("servers") {
-            if !servers.is_table() {
+            if !servers.is_table_like() {
                 return Err(
                     "invalid Rho config.toml; mcp.servers must be a table and the file was not changed"
                         .to_string(),
                 );
             }
             if let Some(server) = servers.get("memorywhale") {
-                if !server.is_table() {
+                if !server.is_table_like() {
                     return Err(
                         "invalid Rho config.toml; mcp.servers.memorywhale must be a table and the file was not changed"
                             .to_string(),
@@ -366,10 +370,26 @@ fn ensure_child_table<'a>(
         .expect("child table was just inserted or verified"))
 }
 
-fn memorywhale_server_table(doc: &mut DocumentMut) -> Result<&mut Table, String> {
+fn memorywhale_server_table(doc: &mut DocumentMut) -> Result<&mut dyn TableLike, String> {
     let mcp = ensure_child_table(doc.as_table_mut(), "mcp", true)?;
     let servers = ensure_child_table(mcp, "servers", true)?;
-    ensure_child_table(servers, "memorywhale", false)
+    let has_table_like = servers
+        .get("memorywhale")
+        .is_some_and(Item::is_table_like);
+    if servers.contains_key("memorywhale") && !has_table_like {
+        return Err(
+            "invalid Rho config.toml; mcp.servers.memorywhale must be a table and the file was not changed"
+                .to_string(),
+        );
+    }
+    if has_table_like {
+        return Ok(servers
+            .get_mut("memorywhale")
+            .and_then(Item::as_table_like_mut)
+            .expect("memorywhale entry was just verified as table-like"));
+    }
+    let table = ensure_child_table(servers, "memorywhale", false)?;
+    Ok(table)
 }
 
 fn merge_mcp(existing: &str) -> Result<(String, bool), String> {
@@ -379,8 +399,16 @@ fn merge_mcp(existing: &str) -> Result<(String, bool), String> {
         return Ok((existing.to_string(), false));
     }
     let server = memorywhale_server_table(&mut doc)?;
-    set_string(server, "transport", MCP_TRANSPORT);
-    set_string(server, "command", MCP_COMMAND);
+    let mut changed = false;
+    changed |= set_string(server, "transport", MCP_TRANSPORT);
+    changed |= set_string(server, "command", MCP_COMMAND);
+    if server.get("enabled").and_then(Item::as_bool) == Some(false) {
+        server.insert("enabled", value(true));
+        changed = true;
+    }
+    if !changed {
+        return Ok((existing.to_string(), false));
+    }
     Ok((doc.to_string(), true))
 }
 
@@ -402,7 +430,7 @@ fn unmerge_mcp(existing: &str) -> Result<(String, bool), String> {
     let Some(servers) = mcp_table.get_mut("servers") else {
         return Ok((existing.to_string(), false));
     };
-    let Some(servers_table) = servers.as_table_mut() else {
+    let Some(servers_table) = servers.as_table_like_mut() else {
         return Err(
             "invalid Rho config.toml; mcp.servers must be a table and the file was not changed"
                 .to_string(),
@@ -621,6 +649,52 @@ env = { MEMORYWHALE_DATA_DIR = "/custom" }
             .unwrap();
         assert_eq!(server["command"].as_str(), Some("mw-mcp"));
         assert_eq!(server["transport"].as_str(), Some("stdio"));
+    }
+
+    #[test]
+    fn merge_mcp_enables_disabled_server() {
+        let original = r#"[mcp.servers.memorywhale]
+transport = "stdio"
+command = "mw-mcp"
+enabled = false
+"#;
+        let (merged, changed) = merge_mcp(original).unwrap();
+        assert!(changed);
+        let doc = merged.parse::<DocumentMut>().unwrap();
+        let server = doc["mcp"]["servers"]["memorywhale"]
+            .as_table_like()
+            .expect("memorywhale server table");
+        assert_eq!(server.get("enabled").and_then(Item::as_bool), Some(true));
+    }
+
+    #[test]
+    fn merge_mcp_accepts_inline_memorywhale_table() {
+        let original = r#"[mcp.servers]
+memorywhale = { transport = "stdio", command = "old-mcp" }
+"#;
+        let (merged, changed) = merge_mcp(original).unwrap();
+        assert!(changed);
+        let doc = merged.parse::<DocumentMut>().unwrap();
+        let server = doc["mcp"]["servers"]["memorywhale"]
+            .as_table_like()
+            .expect("inline memorywhale table");
+        assert_eq!(server.get("command").and_then(Item::as_str), Some("mw-mcp"));
+    }
+
+    #[test]
+    fn unmerge_mcp_removes_inline_memorywhale_table() {
+        let original = r#"[model]
+provider = "openai"
+
+[mcp.servers]
+memorywhale = { transport = "stdio", command = "mw-mcp" }
+filesystem = { transport = "stdio", command = "npx" }
+"#;
+        let (reverted, changed) = unmerge_mcp(original).unwrap();
+        assert!(changed);
+        assert!(reverted.contains("provider = \"openai\""));
+        assert!(reverted.contains("filesystem"));
+        assert!(!reverted.contains("memorywhale"));
     }
 
     #[test]
