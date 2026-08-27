@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Claude Code PostToolUse hook: record every Bash command the agent runs into
-MemoryWhale, so next week's session can see what this week's already tried.
+"""Claude Code hook: record every Bash command the agent runs into MemoryWhale.
 
-Reads the hook JSON payload from stdin (Claude Code's documented PostToolUse
-shape), and — only for the Bash tool — shells out to `mw-remember` with the
-command, its output, and its exit status. Field names are read defensively
-with fallbacks, since hook payload shape can vary slightly across Claude Code
-versions; if a field is missing this still records what it can.
+Handles both PostToolUse (successful Bash calls) and PostToolUseFailure (failed
+Bash calls). Reads the hook JSON payload from stdin, and — only for the Bash
+tool — shells out to `mw-remember` with the command, its output, and its exit
+status. Field names are read defensively with fallbacks, since hook payload
+shape can vary slightly across Claude Code versions; if a field is missing
+this still records what it can.
 
 Never fails the tool call: any error here is swallowed and the hook exits 0,
 so a MemoryWhale hiccup can't block your agent session.
@@ -39,21 +39,26 @@ def main():
         return
 
     tool_input = payload.get("tool_input") or {}
-    tool_response = payload.get("tool_response") or {}
-
     command = tool_input.get("command", "").strip()
     if not command:
         return
 
     cwd = payload.get("cwd") or tool_input.get("cwd") or ""
-    stdout = str(first(tool_response, "stdout", "output"))[:MAX_OUTPUT]
-    stderr = str(first(tool_response, "stderr"))[:MAX_OUTPUT]
-    is_error = bool(
-        tool_response.get("is_error")
-        or tool_response.get("isError")
-        or tool_response.get("interrupted")
-    )
-    exit_code = "1" if is_error else "0"
+    event = payload.get("hook_event_name", "")
+    if event == "PostToolUseFailure":
+        stdout = ""
+        stderr = str(payload.get("error", ""))[:MAX_OUTPUT]
+        exit_code = "1"
+    else:
+        tool_response = payload.get("tool_response") or {}
+        stdout = str(first(tool_response, "stdout", "output"))[:MAX_OUTPUT]
+        stderr = str(first(tool_response, "stderr"))[:MAX_OUTPUT]
+        is_error = bool(
+            tool_response.get("is_error")
+            or tool_response.get("isError")
+            or tool_response.get("interrupted")
+        )
+        exit_code = "1" if is_error else "0"
 
     mw_remember = shutil.which("mw-remember")
     if not mw_remember:
@@ -88,6 +93,14 @@ def _selftest():
 
     long_text = "x" * 100
     assert len(long_text[:MAX_OUTPUT]) <= MAX_OUTPUT
+
+    failure_payload = {
+        "hook_event_name": "PostToolUseFailure",
+        "tool_name": "Bash",
+        "tool_input": {"command": "false"},
+        "error": "Exit code 1",
+    }
+    assert failure_payload["hook_event_name"] == "PostToolUseFailure"
 
     print("mw-record.py: selftest OK")
 

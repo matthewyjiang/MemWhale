@@ -92,13 +92,21 @@ struct ClaudeSettings {
 struct Hooks {
     #[serde(rename = "PostToolUse", default, skip_serializing_if = "Vec::is_empty")]
     post_tool_use: Vec<HookGroup>,
+    #[serde(
+        rename = "PostToolUseFailure",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    post_tool_use_failure: Vec<HookGroup>,
     #[serde(flatten)]
     extra: Map<String, Value>,
 }
 
 impl Hooks {
     fn is_empty(&self) -> bool {
-        self.post_tool_use.is_empty() && self.extra.is_empty()
+        self.post_tool_use.is_empty()
+            && self.post_tool_use_failure.is_empty()
+            && self.extra.is_empty()
     }
 }
 
@@ -265,14 +273,8 @@ fn serialize_settings(root: &ClaudeSettings) -> Result<String, String> {
         .map_err(|err| format!("failed to serialize settings.json: {err}"))
 }
 
-fn merge_settings(existing: &str, hook_path: &Path) -> Result<(String, bool), String> {
-    let before = parse_settings(existing)?;
-    let mut root = before.clone();
-    let entry = HookEntry::command(hook_path);
-
-    let hooks = root.hooks.get_or_insert_with(Hooks::default);
-    if let Some(group) = hooks
-        .post_tool_use
+fn upsert_bash_hook(groups: &mut Vec<HookGroup>, entry: HookEntry) {
+    if let Some(group) = groups
         .iter_mut()
         .find(|group| group.matcher.as_deref() == Some("Bash"))
     {
@@ -280,12 +282,35 @@ fn merge_settings(existing: &str, hook_path: &Path) -> Result<(String, bool), St
         list.retain(|hook| !hook.is_memorywhale());
         list.push(entry);
     } else {
-        hooks.post_tool_use.push(HookGroup {
+        groups.push(HookGroup {
             matcher: Some("Bash".to_string()),
             hooks: Some(vec![entry]),
             extra: Map::new(),
         });
     }
+}
+
+fn remove_memorywhale_bash_hooks(groups: &mut Vec<HookGroup>) {
+    groups.retain_mut(|group| {
+        if group.matcher.as_deref() != Some("Bash") {
+            return true;
+        }
+        let Some(list) = group.hooks.as_mut() else {
+            return true;
+        };
+        list.retain(|hook| !hook.is_memorywhale());
+        !list.is_empty()
+    });
+}
+
+fn merge_settings(existing: &str, hook_path: &Path) -> Result<(String, bool), String> {
+    let before = parse_settings(existing)?;
+    let mut root = before.clone();
+    let entry = HookEntry::command(hook_path);
+
+    let hooks = root.hooks.get_or_insert_with(Hooks::default);
+    upsert_bash_hook(&mut hooks.post_tool_use, entry.clone());
+    upsert_bash_hook(&mut hooks.post_tool_use_failure, entry);
 
     if root == before {
         return Ok((existing.to_string(), false));
@@ -304,16 +329,8 @@ fn unmerge_settings(existing: &str) -> Result<(String, bool), String> {
         return Ok((existing.to_string(), false));
     };
 
-    hooks.post_tool_use.retain_mut(|group| {
-        if group.matcher.as_deref() != Some("Bash") {
-            return true;
-        }
-        let Some(list) = group.hooks.as_mut() else {
-            return true;
-        };
-        list.retain(|hook| !hook.is_memorywhale());
-        !list.is_empty()
-    });
+    remove_memorywhale_bash_hooks(&mut hooks.post_tool_use);
+    remove_memorywhale_bash_hooks(&mut hooks.post_tool_use_failure);
     if hooks.is_empty() {
         root.hooks = None;
     }
@@ -343,7 +360,7 @@ fn atomic_write(path: &Path, contents: &str) -> Result<(), String> {
 
 fn register_mcp() -> McpOutcome {
     match Command::new("claude")
-        .args(["mcp", "get", "--scope", "user", "memorywhale"])
+        .args(["mcp", "get", "memorywhale"])
         .output()
     {
         Ok(output) if output.status.success() => McpOutcome::Unchanged,
@@ -372,7 +389,7 @@ fn register_mcp() -> McpOutcome {
 
 fn unregister_mcp() -> McpOutcome {
     match Command::new("claude")
-        .args(["mcp", "get", "--scope", "user", "memorywhale"])
+        .args(["mcp", "get", "memorywhale"])
         .output()
     {
         Ok(output) if output.status.success() => match Command::new("claude")
@@ -456,6 +473,10 @@ mod tests {
             .unwrap();
         assert_eq!(command, hook_command(&hook));
         assert_eq!(value["hooks"]["PostToolUse"][0]["matcher"], "Bash");
+        let failure_command = value["hooks"]["PostToolUseFailure"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert_eq!(failure_command, hook_command(&hook));
     }
 
     #[test]

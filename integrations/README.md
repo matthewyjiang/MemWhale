@@ -26,7 +26,7 @@ features.
 | Client | MCP memory access | Auto-capture | Guidance | Setup |
 | --- | --- | --- | --- | --- |
 | Any stdio MCP client | Yes | No | Client-specific | [Generic MCP](generic-mcp/README.md) |
-| Claude Code | Yes | Yes, optional `PostToolUse` hook | Yes, optional skill | [Guide](claude-code/README.md) |
+| Claude Code | Yes | Yes, optional capture hooks | Yes, optional skill | [Guide](claude-code/README.md) |
 | CLIProxyAPI | No; model-provider proxy | No | No; configure in the agent | [Guide](cliproxyapi/README.md) |
 | Claude Desktop | Yes | No | No | [Guide](claude-desktop/README.md) |
 | Cline | Yes | No | Yes | [Guide](cline/README.md) |
@@ -89,7 +89,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | mw-
 
 The optional
 [`mw-record.py`](../crates/mw-cli/claude-code/mw-record.py)
-`PostToolUse` hook captures Claude Code Bash calls through `mw-remember`. It is
+The Claude Code capture hooks record Bash calls through `mw-remember`. They are
 separate from MCP: MCP lets the client retrieve and explicitly save memory,
 while the hook records observed execution.
 

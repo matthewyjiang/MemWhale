@@ -1,8 +1,8 @@
 # Claude Code + MemoryWhale
 
 Claude Code can use MemoryWhale in three independent ways: `mw-mcp` provides
-native memory tools, a `PostToolUse` hook records the Bash commands Claude
-runs (successes and failures alike), and
+native memory tools, `PostToolUse` and `PostToolUseFailure` hooks record the
+Bash commands Claude runs (successes and failures alike), and
 a skill teaches Claude when to search or save debugging memory.
 
 ## Status
@@ -25,7 +25,7 @@ The hook and skill are optional repository-provided components.
 | Capability | Available |
 | --- | --- |
 | MCP memory access | Yes |
-| Automatic execution capture | Yes, optional `PostToolUse` hook for Bash calls |
+| Automatic execution capture | Yes, optional `PostToolUse` and `PostToolUseFailure` hooks for Bash calls |
 | Memory-use guidance | Yes, optional skill |
 
 ## Setup
@@ -37,7 +37,7 @@ mw integrate claude
 ```
 
 That copies the capture hook and skill into `~/.claude/`, merges the
-`PostToolUse` Bash hook into `~/.claude/settings.json`, and registers `mw-mcp`
+`PostToolUse` and `PostToolUseFailure` Bash hooks into `~/.claude/settings.json`, and registers `mw-mcp`
 when the Claude Code CLI is on your PATH. Restart Claude Code afterward. To
 undo: `mw integrate claude --revert`.
 
@@ -87,12 +87,23 @@ Add the following entry to `~/.claude/settings.json`:
           }
         ]
       }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/mw-record.py\""
+          }
+        ]
+      }
     ]
   }
 }
 ```
 
-If the file already contains settings or hooks, merge this `PostToolUse` group
+If the file already contains settings or hooks, merge these Bash hook groups
 with them instead of replacing the file. Claude Code also supports project
 hooks in `.claude/settings.json`; see the official
 [hook locations](https://code.claude.com/docs/en/hooks#hook-locations) before
@@ -149,18 +160,17 @@ MCP server is not connected, so each component can be installed separately.
 ## Automatic capture
 
 The bundled [`mw-record.py`](../../crates/mw-cli/claude-code/mw-record.py) hook receives Claude
-Code's documented `PostToolUse` JSON on standard input. For each `Bash` call,
-it passes the command, working directory, output, and an exit status to
-`mw-remember` with the note `agent:claude-code`; failed commands are recorded
-with a nonzero exit status derived from the tool response's error flags.
-Standard output and standard error are each capped at 20,000 characters before
-being passed to `mw-remember`, which applies MemoryWhale's normal secret
-redaction.
+Code's hook JSON on standard input. For each `Bash` call, it passes the
+command, working directory, output, and an exit status to
+`mw-remember` with the note `agent:claude-code`. Successful calls arrive on
+`PostToolUse`; failed calls arrive on `PostToolUseFailure` with the error in a
+top-level `error` field. Standard output and standard error are each capped at
+20,000 characters before being passed to `mw-remember`, which applies
+MemoryWhale's normal secret redaction.
 
-This hook is registered for `PostToolUse`, which Claude Code fires after every
-Bash tool call, so both successful and failed commands are captured. Commands
-run in an ordinary terminal are captured only through MemoryWhale's normal
-terminal capture paths.
+The hook is registered for both events so successful and failed Bash commands
+are captured. Commands run in an ordinary terminal are captured only through
+MemoryWhale's normal terminal capture paths.
 
 ## Limitations
 
@@ -205,7 +215,7 @@ Remove the user-scoped MCP server:
 claude mcp remove --scope user memorywhale
 ```
 
-Delete only the MemoryWhale `PostToolUse` group from
+Delete the MemoryWhale `PostToolUse` and `PostToolUseFailure` Bash groups from
 `~/.claude/settings.json`, preserving any other hooks and settings. Then remove
 the copied files:
 

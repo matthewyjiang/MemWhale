@@ -1,5 +1,12 @@
 use std::process::Command;
 
+/// Run `mw` without inheriting PATH so MCP registration cannot touch a real Claude install.
+fn mw_cmd() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_mw"));
+    cmd.env("PATH", "");
+    cmd
+}
+
 fn sandbox(name: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!(
         "mw-claude-{name}-{}-{}",
@@ -15,7 +22,7 @@ fn sandbox(name: &str) -> std::path::PathBuf {
 fn user_can_install_memorywhale_into_a_fresh_claude_config() {
     let claude_dir = sandbox("fresh");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+    let output = mw_cmd()
         .args(["integrate", "claude"])
         .env("CLAUDE_CONFIG_DIR", &claude_dir)
         .output()
@@ -35,6 +42,16 @@ fn user_can_install_memorywhale_into_a_fresh_claude_config() {
         .find(|group| group["matcher"] == "Bash")
         .expect("missing Bash hook group");
     assert!(bash_group["hooks"][0]["command"]
+        .as_str()
+        .unwrap()
+        .contains("mw-record.py"));
+    let failure_group = settings["hooks"]["PostToolUseFailure"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| group["matcher"] == "Bash")
+        .expect("missing Bash PostToolUseFailure hook group");
+    assert!(failure_group["hooks"][0]["command"]
         .as_str()
         .unwrap()
         .contains("mw-record.py"));
@@ -66,7 +83,7 @@ fn installing_memorywhale_preserves_existing_claude_settings() {
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+    let output = mw_cmd()
         .args(["integrate", "claude-code"])
         .env("CLAUDE_CONFIG_DIR", &claude_dir)
         .output()
@@ -84,7 +101,7 @@ fn installing_memorywhale_twice_does_not_duplicate_the_hook() {
     let claude_dir = sandbox("idempotent");
 
     for _ in 0..2 {
-        let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+        let output = mw_cmd()
             .args(["integrate", "claude"])
             .env("CLAUDE_CONFIG_DIR", &claude_dir)
             .output()
@@ -114,7 +131,7 @@ fn invalid_claude_settings_are_left_untouched() {
     let original = "{not json";
     std::fs::write(&settings_path, original).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+    let output = mw_cmd()
         .args(["integrate", "claude"])
         .env("CLAUDE_CONFIG_DIR", &claude_dir)
         .output()
@@ -139,14 +156,14 @@ fn invalid_claude_settings_are_left_untouched() {
 fn revert_removes_installed_claude_integration() {
     let claude_dir = sandbox("revert");
 
-    let install = Command::new(env!("CARGO_BIN_EXE_mw"))
+    let install = mw_cmd()
         .args(["integrate", "claude"])
         .env("CLAUDE_CONFIG_DIR", &claude_dir)
         .output()
         .expect("run Claude install");
     assert!(install.status.success(), "install failed: {install:?}");
 
-    let revert = Command::new(env!("CARGO_BIN_EXE_mw"))
+    let revert = mw_cmd()
         .args(["integrate", "claude", "--revert"])
         .env("CLAUDE_CONFIG_DIR", &claude_dir)
         .output()
@@ -184,14 +201,14 @@ fn revert_preserves_unrelated_claude_settings() {
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+    let output = mw_cmd()
         .args(["integrate", "claude"])
         .env("CLAUDE_CONFIG_DIR", &claude_dir)
         .output()
         .expect("run Claude install");
     assert!(output.status.success(), "install failed: {output:?}");
 
-    let revert = Command::new(env!("CARGO_BIN_EXE_mw"))
+    let revert = mw_cmd()
         .args(["integrate", "claude-code", "--revert"])
         .env("CLAUDE_CONFIG_DIR", &claude_dir)
         .output()
@@ -209,12 +226,12 @@ fn revert_preserves_unrelated_claude_settings() {
 fn revert_leaves_invalid_claude_settings_untouched() {
     let claude_dir = sandbox("revert-invalid");
     let settings_path = claude_dir.join("settings.json");
-    std::fs::create_dir_all(&claude_dir.join("hooks")).unwrap();
+    std::fs::create_dir_all(claude_dir.join("hooks")).unwrap();
     std::fs::write(claude_dir.join("hooks/mw-record.py"), "hook").unwrap();
     let original = "{not json";
     std::fs::write(&settings_path, original).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+    let output = mw_cmd()
         .args(["integrate", "claude", "--revert"])
         .env("CLAUDE_CONFIG_DIR", &claude_dir)
         .output()
@@ -236,7 +253,7 @@ fn revert_without_memorywhale_installed_is_a_noop_for_settings() {
     let original = r#"{"theme":"dark"}"#;
     std::fs::write(&settings_path, original).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+    let output = mw_cmd()
         .args(["integrate", "claude", "--revert"])
         .env("CLAUDE_CONFIG_DIR", &claude_dir)
         .output()
