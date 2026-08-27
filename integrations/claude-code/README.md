@@ -17,7 +17,8 @@ The hook and skill are optional repository-provided components.
 - MemoryWhale installed with `mw-mcp` and `mw-remember` on `PATH`.
 - Claude Code installed on Linux, macOS, or Windows through WSL.
 - Python 3 for the capture hook.
-- A local checkout of this repository to copy the bundled hook and skill.
+- A local checkout of this repository to copy the bundled hook and skill (only
+  for manual setup; `mw integrate claude` needs no checkout).
 
 ## Capabilities
 
@@ -29,9 +30,27 @@ The hook and skill are optional repository-provided components.
 
 ## Setup
 
-Run the file-copy commands below from the MemoryWhale repository root.
+From any machine with MemoryWhale installed:
 
-### Connect the MCP server
+```bash
+mw integrate claude
+```
+
+That copies the capture hook and skill into `~/.claude/`, merges the
+`PostToolUse` Bash hook into `~/.claude/settings.json`, and registers `mw-mcp`
+when the Claude Code CLI is on your PATH. Restart Claude Code afterward. To
+undo: `mw integrate claude --revert`.
+
+The bundled hook and skill ship inside the `memorywhale-cli` crate
+(`crates/mw-cli/claude-code/`). The copies under `integrations/claude-code/`
+mirror those files for documentation.
+
+### Manual setup
+
+If you prefer to install by hand from a repository checkout, run the file-copy
+commands below from the MemoryWhale repository root.
+
+#### Connect the MCP server
 
 Register `mw-mcp` at user scope so it is available in every local project:
 
@@ -44,7 +63,7 @@ This gives Claude Code the six MemoryWhale tools: `recent_errors`,
 The command follows Claude Code's documented
 [local stdio server syntax](https://code.claude.com/docs/en/mcp#option-3-add-a-local-stdio-server).
 
-### Install the capture hook
+#### Install the capture hook
 
 Copy the bundled hook into your personal Claude Code configuration:
 
@@ -80,7 +99,7 @@ hooks in `.claude/settings.json`; see the official
 [hook locations](https://code.claude.com/docs/en/hooks#hook-locations) before
 committing a hook that teammates will run.
 
-### Install the skill
+#### Install the skill
 
 Copy the skill into Claude Code's personal skills directory:
 
@@ -170,6 +189,16 @@ terminal capture paths.
   value.
 
 ## Remove integration
+
+```bash
+mw integrate claude --revert
+```
+
+That removes the hook, skill, and MemoryWhale entry from `~/.claude/settings.json`,
+and unregisters the user-scoped MCP server when the Claude Code CLI is available.
+It does not delete MemoryWhale's database or any captured records.
+
+Manual removal (if you installed by hand):
 
 Remove the user-scoped MCP server:
 

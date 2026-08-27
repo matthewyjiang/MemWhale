@@ -1,0 +1,253 @@
+use std::process::Command;
+
+fn sandbox(name: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "mw-claude-{name}-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    let _ = std::fs::remove_dir_all(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    path
+}
+
+#[test]
+fn user_can_install_memorywhale_into_a_fresh_claude_config() {
+    let claude_dir = sandbox("fresh");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+        .args(["integrate", "claude"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude integration command");
+
+    assert!(output.status.success(), "command failed: {output:?}");
+    assert!(claude_dir.join("hooks/mw-record.py").is_file());
+    assert!(claude_dir.join("skills/memorywhale/SKILL.md").is_file());
+
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+            .unwrap();
+    let bash_group = settings["hooks"]["PostToolUse"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| group["matcher"] == "Bash")
+        .expect("missing Bash hook group");
+    assert!(
+        bash_group["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains("mw-record.py")
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Claude Code"),
+        "missing success message: {output:?}"
+    );
+}
+
+#[test]
+fn installing_memorywhale_preserves_existing_claude_settings() {
+    let claude_dir = sandbox("existing");
+    let settings_path = claude_dir.join("settings.json");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        &settings_path,
+        r#"{
+  "theme": "dark",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [{"type": "command", "command": "echo read"}]
+      }
+    ]
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+        .args(["integrate", "claude-code"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude integration command");
+
+    assert!(output.status.success(), "command failed: {output:?}");
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(settings_path).unwrap()).unwrap();
+    assert_eq!(updated["theme"], "dark");
+    assert_eq!(updated["hooks"]["PostToolUse"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn installing_memorywhale_twice_does_not_duplicate_the_hook() {
+    let claude_dir = sandbox("idempotent");
+
+    for _ in 0..2 {
+        let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+            .args(["integrate", "claude"])
+            .env("CLAUDE_CONFIG_DIR", &claude_dir)
+            .output()
+            .expect("run Claude integration command");
+        assert!(output.status.success(), "command failed: {output:?}");
+    }
+
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+            .unwrap();
+    let bash_hooks = updated["hooks"]["PostToolUse"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| group["matcher"] == "Bash")
+        .unwrap()["hooks"]
+        .as_array()
+        .unwrap();
+    assert_eq!(bash_hooks.len(), 1);
+}
+
+#[test]
+fn invalid_claude_settings_are_left_untouched() {
+    let claude_dir = sandbox("invalid");
+    let settings_path = claude_dir.join("settings.json");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    let original = "{not json";
+    std::fs::write(&settings_path, original).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+        .args(["integrate", "claude"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude integration command");
+
+    assert!(
+        !output.status.success(),
+        "invalid JSON was accepted: {output:?}"
+    );
+    assert_eq!(std::fs::read_to_string(settings_path).unwrap(), original);
+    assert!(
+        !claude_dir.join("hooks/mw-record.py").exists(),
+        "hook was written despite invalid settings: {output:?}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("invalid Claude settings.json"),
+        "unexpected error: {output:?}"
+    );
+}
+
+#[test]
+fn revert_removes_installed_claude_integration() {
+    let claude_dir = sandbox("revert");
+
+    let install = Command::new(env!("CARGO_BIN_EXE_mw"))
+        .args(["integrate", "claude"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude install");
+    assert!(install.status.success(), "install failed: {install:?}");
+
+    let revert = Command::new(env!("CARGO_BIN_EXE_mw"))
+        .args(["integrate", "claude", "--revert"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude revert");
+    assert!(revert.status.success(), "revert failed: {revert:?}");
+
+    assert!(!claude_dir.join("hooks/mw-record.py").exists());
+    assert!(!claude_dir.join("skills/memorywhale/SKILL.md").exists());
+    assert!(!claude_dir.join("settings.json").exists());
+    assert!(
+        String::from_utf8_lossy(&revert.stdout).contains("removed from Claude Code"),
+        "missing revert message: {revert:?}"
+    );
+}
+
+#[test]
+fn revert_preserves_unrelated_claude_settings() {
+    let claude_dir = sandbox("revert-preserve");
+    let settings_path = claude_dir.join("settings.json");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(
+        &settings_path,
+        r#"{
+  "theme": "dark",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [{"type": "command", "command": "echo read"}]
+      }
+    ]
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+        .args(["integrate", "claude"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude install");
+    assert!(output.status.success(), "install failed: {output:?}");
+
+    let revert = Command::new(env!("CARGO_BIN_EXE_mw"))
+        .args(["integrate", "claude-code", "--revert"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude revert");
+    assert!(revert.status.success(), "revert failed: {revert:?}");
+
+    let updated: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(settings_path).unwrap()).unwrap();
+    assert_eq!(updated["theme"], "dark");
+    assert_eq!(updated["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
+    assert_eq!(updated["hooks"]["PostToolUse"][0]["matcher"], "Read");
+}
+
+#[test]
+fn revert_leaves_invalid_claude_settings_untouched() {
+    let claude_dir = sandbox("revert-invalid");
+    let settings_path = claude_dir.join("settings.json");
+    std::fs::create_dir_all(&claude_dir.join("hooks")).unwrap();
+    std::fs::write(claude_dir.join("hooks/mw-record.py"), "hook").unwrap();
+    let original = "{not json";
+    std::fs::write(&settings_path, original).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+        .args(["integrate", "claude", "--revert"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude revert");
+
+    assert!(
+        !output.status.success(),
+        "invalid JSON revert was accepted: {output:?}"
+    );
+    assert_eq!(std::fs::read_to_string(settings_path).unwrap(), original);
+    assert!(claude_dir.join("hooks/mw-record.py").exists());
+}
+
+#[test]
+fn revert_without_memorywhale_installed_is_a_noop_for_settings() {
+    let claude_dir = sandbox("revert-noop");
+    let settings_path = claude_dir.join("settings.json");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    let original = r#"{"theme":"dark"}"#;
+    std::fs::write(&settings_path, original).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mw"))
+        .args(["integrate", "claude", "--revert"])
+        .env("CLAUDE_CONFIG_DIR", &claude_dir)
+        .output()
+        .expect("run Claude revert");
+
+    assert!(output.status.success(), "revert failed: {output:?}");
+    assert_eq!(std::fs::read_to_string(settings_path).unwrap(), original);
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("settings: MemoryWhale hook entry removed"),
+        "unexpected settings message: {output:?}"
+    );
+}
