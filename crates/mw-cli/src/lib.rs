@@ -4,7 +4,7 @@ pub mod integrate;
 
 /// Deprecated: use [`integrate::hermes`] instead.
 #[deprecated(
-    since = "0.9.2",
+    since = "0.9.1",
     note = "use memorywhale_cli::integrate::hermes instead"
 )]
 pub mod hermes {
