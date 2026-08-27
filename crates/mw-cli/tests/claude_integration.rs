@@ -52,7 +52,7 @@ fn user_can_install_memorywhale_into_a_fresh_claude_config() {
         .expect("run Claude integration command");
 
     assert!(output.status.success(), "command failed: {output:?}");
-    assert!(claude_dir.join("hooks/mw-record.py").is_file());
+    assert!(!claude_dir.join("hooks/mw-record.py").exists());
     assert!(claude_dir.join("skills/memorywhale/SKILL.md").is_file());
 
     let settings: serde_json::Value =
@@ -64,20 +64,25 @@ fn user_can_install_memorywhale_into_a_fresh_claude_config() {
         .iter()
         .find(|group| group["matcher"] == "Bash")
         .expect("missing Bash hook group");
-    assert!(bash_group["hooks"][0]["command"]
-        .as_str()
-        .unwrap()
-        .contains("mw-record.py"));
+    let command = bash_group["hooks"][0]["command"].as_str().unwrap();
+    assert!(command.contains("mw-remember"), "command: {command}");
+    assert!(
+        command.contains("--from-hook claude"),
+        "command: {command}"
+    );
+    assert!(!command.contains("python3"), "command: {command}");
     let failure_group = settings["hooks"]["PostToolUseFailure"]
         .as_array()
         .unwrap()
         .iter()
         .find(|group| group["matcher"] == "Bash")
         .expect("missing Bash PostToolUseFailure hook group");
-    assert!(failure_group["hooks"][0]["command"]
-        .as_str()
-        .unwrap()
-        .contains("mw-record.py"));
+    let failure_command = failure_group["hooks"][0]["command"].as_str().unwrap();
+    assert!(
+        failure_command.contains("mw-remember")
+            && failure_command.contains("--from-hook claude"),
+        "command: {failure_command}"
+    );
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("Claude Code"),
         "missing success message: {output:?}"
@@ -167,7 +172,11 @@ fn invalid_claude_settings_are_left_untouched() {
     assert_eq!(std::fs::read_to_string(settings_path).unwrap(), original);
     assert!(
         !claude_dir.join("hooks/mw-record.py").exists(),
-        "hook was written despite invalid settings: {output:?}"
+        "legacy hook was written despite invalid settings: {output:?}"
+    );
+    assert!(
+        !claude_dir.join("skills/memorywhale/SKILL.md").exists(),
+        "skill was written despite invalid settings: {output:?}"
     );
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("invalid Claude settings.json"),

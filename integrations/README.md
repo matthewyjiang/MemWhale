@@ -92,12 +92,11 @@ observed execution and are separate from MCP. Both the hook and the shared
 [`SKILL.md`](../crates/mw-cli/integrate/SKILL.md) require explicit installation
 and neither is needed for ordinary terminal capture.
 
-The optional Claude Code [`mw-record.py`](../crates/mw-cli/claude-code/mw-record.py)
-records Bash calls through `mw-remember`.
-
-The optional Rho [`mw-record.py`](../crates/mw-cli/rho/mw-record.py) records
-bash and powershell tool calls through `mw-remember` when the hook payload
-includes command text; failed calls are still recorded with failure metadata.
+Claude Code and Rho capture hooks spawn `mw-remember --from-hook claude`
+or `mw-remember --from-hook rho`. That binary reads the named client's
+hook JSON from stdin and records matching bash/powershell calls. Failed
+Rho calls are still recorded with failure metadata even when the payload
+has no command text.
 
 ## Adding or updating an integration
 

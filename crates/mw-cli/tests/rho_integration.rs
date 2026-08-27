@@ -28,13 +28,16 @@ fn user_can_install_memorywhale_into_a_fresh_rho_home() {
         .expect("run Rho integration command");
 
     assert!(output.status.success(), "command failed: {output:?}");
-    assert!(rho_dir.join("hooks/mw-record.py").is_file());
+    assert!(!rho_dir.join("hooks/mw-record.py").exists());
     assert!(rho_dir.join("skills/memorywhale/SKILL.md").is_file());
 
     let hooks = std::fs::read_to_string(rho_dir.join("hooks.toml")).unwrap();
     assert!(hooks.contains("id = \"memorywhale-record\""));
     assert!(hooks.contains("after_tool_use"));
-    assert!(hooks.contains("mw-record.py"));
+    assert!(hooks.contains("mw-remember"));
+    assert!(hooks.contains("--from-hook"));
+    assert!(hooks.contains("\"rho\""));
+    assert!(!hooks.contains("python3"));
 
     let config = std::fs::read_to_string(rho_dir.join("config.toml")).unwrap();
     assert!(config.contains("[mcp.servers.memorywhale]"));
@@ -126,7 +129,7 @@ fn invalid_rho_hooks_are_left_untouched() {
     assert_eq!(std::fs::read_to_string(hooks_path).unwrap(), original);
     assert!(
         !rho_dir.join("hooks/mw-record.py").exists(),
-        "hook was written despite invalid hooks.toml: {output:?}"
+        "legacy hook was written despite invalid hooks.toml: {output:?}"
     );
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("invalid Rho hooks.toml"),
@@ -154,7 +157,7 @@ fn invalid_rho_config_is_left_untouched() {
     assert_eq!(std::fs::read_to_string(config_path).unwrap(), original);
     assert!(
         !rho_dir.join("hooks/mw-record.py").exists(),
-        "hook was written despite invalid config.toml: {output:?}"
+        "legacy hook was written despite invalid config.toml: {output:?}"
     );
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("invalid Rho config.toml"),

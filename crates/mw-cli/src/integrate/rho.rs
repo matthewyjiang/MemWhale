@@ -5,11 +5,10 @@ use std::path::{Path, PathBuf};
 use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, TableLike};
 
 use super::files::{
-    atomic_write, install_bundled, parse_revert, read_or_empty, remove_bundled, write_or_remove,
-    BundledLayout,
+    atomic_write, install_skill, mw_remember_executable, parse_revert, read_or_empty,
+    remove_legacy_python_hook, remove_skill, write_or_remove, BundledLayout,
 };
-
-const HOOK_SCRIPT: &str = include_str!("../../rho/mw-record.py");
+use crate::agent_hook::Agent;
 
 const HOOK_ID: &str = "memorywhale-record";
 const HOOK_EVENT: &str = "after_tool_use";
@@ -30,7 +29,7 @@ pub fn cli(args: &[String]) -> Result<(), String> {
 
 struct InstallResult {
     config_dir: PathBuf,
-    hook_path: PathBuf,
+    remember_path: PathBuf,
     hooks_path: PathBuf,
     config_path: PathBuf,
     skill_path: PathBuf,
@@ -65,10 +64,12 @@ fn install() -> Result<InstallResult, String> {
     let paths = RhoPaths::resolve()?;
     let existing_hooks = read_or_empty(&paths.hooks_path)?;
     let existing_config = read_or_empty(&paths.config_path)?;
-    let (hooks_updated, hooks_changed) = merge_hooks(&existing_hooks, &paths.bundled.hook_path)?;
+    let remember_path = mw_remember_executable()?;
+    let (hooks_updated, hooks_changed) = merge_hooks(&existing_hooks, &remember_path)?;
     let (config_updated, config_changed) = merge_mcp(&existing_config)?;
 
-    install_bundled(&paths.bundled, HOOK_SCRIPT, super::SKILL)?;
+    install_skill(&paths.bundled, super::SKILL)?;
+    remove_legacy_python_hook(&paths.bundled.config_dir)?;
 
     if hooks_changed {
         atomic_write(&paths.hooks_path, &hooks_updated)?;
@@ -79,7 +80,7 @@ fn install() -> Result<InstallResult, String> {
 
     Ok(InstallResult {
         config_dir: paths.bundled.config_dir,
-        hook_path: paths.bundled.hook_path,
+        remember_path,
         hooks_path: paths.hooks_path,
         config_path: paths.config_path,
         skill_path: paths.bundled.skill_path,
@@ -108,7 +109,8 @@ fn uninstall() -> Result<RevertResult, String> {
         write_or_remove(&paths.config_path, &config_updated)?;
     }
 
-    let (hook_removed, skill_removed) = remove_bundled(&paths.bundled)?;
+    let hook_removed = remove_legacy_python_hook(&paths.bundled.config_dir)?;
+    let skill_removed = remove_skill(&paths.bundled)?;
 
     Ok(RevertResult {
         config_dir: paths.bundled.config_dir,
@@ -139,8 +141,12 @@ fn parse_toml(existing: &str, what: &str) -> Result<DocumentMut, String> {
         .map_err(|err| format!("invalid Rho {what}; file was not changed: {err}"))
 }
 
-fn hook_command(hook_path: &Path) -> [String; 2] {
-    ["python3".to_string(), hook_path.display().to_string()]
+fn hook_command(remember_path: &Path) -> [String; 3] {
+    [
+        remember_path.display().to_string(),
+        "--from-hook".to_string(),
+        Agent::Rho.as_str().to_string(),
+    ]
 }
 
 fn string_array(table: &Table, key: &str) -> Option<Vec<String>> {
@@ -189,14 +195,25 @@ fn hook_matches(table: &Table, hook_path: &Path) -> bool {
         && table.get("on").and_then(|item| item.as_str()) == Some(HOOK_EVENT)
         && string_array(table, "tools").is_some_and(|tools| str_slice_eq(&tools, &HOOK_TOOLS))
         && string_array(table, "command").is_some_and(|current| {
-            str_slice_eq(&current, &[command[0].as_str(), command[1].as_str()])
+            str_slice_eq(
+                &current,
+                &[
+                    command[0].as_str(),
+                    command[1].as_str(),
+                    command[2].as_str(),
+                ],
+            )
         })
         && table.get("timeout").and_then(|item| item.as_str()) == Some(HOOK_TIMEOUT)
 }
 
 fn apply_hook_fields(table: &mut Table, hook_path: &Path) -> bool {
     let command = hook_command(hook_path);
-    let command_refs = [command[0].as_str(), command[1].as_str()];
+    let command_refs = [
+        command[0].as_str(),
+        command[1].as_str(),
+        command[2].as_str(),
+    ];
     let mut changed = false;
     changed |= set_string(table, "id", HOOK_ID);
     changed |= set_string(table, "on", HOOK_EVENT);
@@ -449,7 +466,11 @@ fn unmerge_mcp(existing: &str) -> Result<(String, bool), String> {
 fn report_install(result: InstallResult) {
     println!("MemoryWhale installed for Rho.");
     println!("  config:   {}", result.config_dir.display());
-    println!("  hook:     {}", result.hook_path.display());
+    println!(
+        "  hook:     {} --from-hook {}",
+        result.remember_path.display(),
+        Agent::Rho.as_str()
+    );
     println!("  hooks:    {}", result.hooks_path.display());
     println!("  settings: {}", result.config_path.display());
     println!("  skill:    {}", result.skill_path.display());
@@ -485,7 +506,7 @@ mod tests {
 
     #[test]
     fn merge_hooks_adds_entry_to_empty_config() {
-        let path = hook("/home/me/.rho/hooks/mw-record.py");
+        let path = hook("/home/me/.local/bin/mw-remember");
         let (merged, changed) = merge_hooks("", &path).unwrap();
         assert!(changed);
         let doc: DocumentMut = merged.parse().unwrap();
@@ -496,7 +517,7 @@ mod tests {
 
     #[test]
     fn merge_hooks_preserves_other_hooks_and_is_idempotent() {
-        let path = hook("/tmp/.rho/hooks/mw-record.py");
+        let path = hook("/tmp/bin/mw-remember");
         let original = r#"version = 1
 
 [[hook]]
@@ -520,7 +541,7 @@ timeout = "5s"
 
     #[test]
     fn merge_hooks_updates_stale_hook_path() {
-        let path = hook("/new/home/.rho/hooks/mw-record.py");
+        let path = hook("/new/home/.local/bin/mw-remember");
         let existing = r#"version = 1
 
 [[hook]]
@@ -539,26 +560,30 @@ timeout = "15s"
             .unwrap()
             .clone();
         assert_eq!(
-            string_array(&table, "command").unwrap()[1],
-            path.display().to_string()
+            string_array(&table, "command").unwrap(),
+            vec![
+                path.display().to_string(),
+                "--from-hook".to_string(),
+                "rho".to_string()
+            ]
         );
     }
 
     #[test]
     fn merge_hooks_rejects_invalid_toml() {
-        let err = merge_hooks("version = [", &hook("/tmp/hook.py")).unwrap_err();
+        let err = merge_hooks("version = [", &hook("/tmp/mw-remember")).unwrap_err();
         assert!(err.contains("invalid Rho hooks.toml"));
     }
 
     #[test]
     fn merge_hooks_rejects_unsupported_version() {
-        let err = merge_hooks("version = 2\n", &hook("/tmp/hook.py")).unwrap_err();
+        let err = merge_hooks("version = 2\n", &hook("/tmp/mw-remember")).unwrap_err();
         assert!(err.contains("unsupported Rho hooks.toml version"));
     }
 
     #[test]
     fn unmerge_hooks_removes_only_memorywhale_hook() {
-        let path = hook("/tmp/.rho/hooks/mw-record.py");
+        let path = hook("/tmp/bin/mw-remember");
         let (installed, _) = merge_hooks(
             r#"version = 1
 
@@ -581,7 +606,7 @@ timeout = "5s"
 
     #[test]
     fn unmerge_hooks_drops_empty_file() {
-        let path = hook("/tmp/.rho/hooks/mw-record.py");
+        let path = hook("/tmp/bin/mw-remember");
         let (installed, _) = merge_hooks("", &path).unwrap();
         let (reverted, changed) = unmerge_hooks(&installed).unwrap();
         assert!(changed);

@@ -20,9 +20,8 @@ The hook and skill are optional repository-provided components.
 
 - MemoryWhale installed with `mw-mcp` and `mw-remember` on `PATH`.
 - Rho installed on Linux, macOS, or Windows.
-- Python 3 for the capture hook.
-- A local checkout of this repository to copy the bundled hook and skill (only
-  for manual setup; `mw integrate rho` needs no checkout).
+- A local checkout of this repository to copy the skill (only for manual
+  setup; `mw integrate rho` needs no checkout).
 
 ## Capabilities
 
@@ -40,12 +39,13 @@ From any machine with MemoryWhale installed:
 mw integrate rho
 ```
 
-That copies the capture hook and skill into `~/.rho/` (or `$RHO_HOME`), merges
-the MemoryWhale hook into `hooks.toml`, and registers `mw-mcp` in
-`config.toml`. Restart Rho afterward. To undo: `mw integrate rho --revert`.
+That installs the skill into `~/.rho/` (or `$RHO_HOME`), points the
+MemoryWhale hook in `hooks.toml` at `mw-remember --from-hook rho`, and registers
+`mw-mcp` in `config.toml`. Restart Rho afterward. To undo:
+`mw integrate rho --revert`.
 
-The bundled hook lives in `crates/mw-cli/rho/` and the skill in
-`crates/mw-cli/integrate/` so they ship inside the published package.
+The skill lives in `crates/mw-cli/integrate/` so it ships inside the published
+package. Capture uses the `mw-remember` binary, not a copied script.
 
 ### Manual setup
 
@@ -84,17 +84,9 @@ An explicit `rho --config` file replaces `~/.rho/config.toml` for that run.
 
 #### Install the capture hook
 
-Copy the bundled hook into your Rho home:
-
-```bash
-RHO_DIR="${RHO_HOME:-$HOME/.rho}"
-mkdir -p "$RHO_DIR/hooks"
-cp crates/mw-cli/rho/mw-record.py "$RHO_DIR/hooks/mw-record.py"
-chmod +x "$RHO_DIR/hooks/mw-record.py"
-```
-
 Add this block to `$RHO_DIR/hooks.toml`. Hook policy lives in that file, not in
-`config.toml`:
+`config.toml`. Use the absolute path to `mw-remember`
+(`command -v mw-remember`):
 
 ```toml
 version = 1
@@ -103,14 +95,14 @@ version = 1
 id = "memorywhale-record"
 on = "after_tool_use"
 tools = ["bash", "powershell"]
-command = ["python3", "/home/you/.rho/hooks/mw-record.py"]
+command = ["/home/you/.cargo/bin/mw-remember", "--from-hook", "rho"]
 timeout = "15s"
 ```
 
-Use an absolute path to the copied script. Rho runs hook programs as argv, not
-as a shell string. If `hooks.toml` already has other `[[hook]]` entries, append
-this one. Do not use `before_tool_use` for capture: that event is fail-closed,
-so a broken hook would deny the tool call.
+Rho runs hook programs as argv, not as a shell string. If `hooks.toml` already
+has other `[[hook]]` entries, append this one. Do not use `before_tool_use`
+for capture: that event is fail-closed, so a broken hook would deny the tool
+call.
 
 #### Install the skill
 
@@ -129,7 +121,6 @@ use the same layout, copy it to `~/.agents/skills/memorywhale/` instead.
 RHO_DIR="${RHO_HOME:-$HOME/.rho}"
 command -v mw-mcp
 command -v mw-remember
-python3 "$RHO_DIR/hooks/mw-record.py" --selftest
 rho mcp list
 rho mcp show memorywhale
 ```
@@ -155,10 +146,10 @@ MCP server is not connected, so each component can be installed separately.
 
 ## Automatic capture
 
-The bundled [`mw-record.py`](../../crates/mw-cli/rho/mw-record.py) hook receives
-Rho's hook JSON on standard input. It matches `after_tool_use` for `bash` and
-`powershell`, then forwards command text to `mw-remember` when the payload
-includes it, along with working directory and exit status when available.
+`mw-remember --from-hook rho` receives Rho's hook JSON on standard input. It
+matches `after_tool_use` for `bash` and `powershell`, then records command
+text when the payload includes it, along with working directory and exit
+status when available.
 
 Rho's current `after_tool_use` payload reports tool name, status, failure
 kind and message, and duration. It does not include the shell command or stdout.
@@ -196,7 +187,6 @@ evidence to outlive the current session.
 - Run `command -v mw-mcp` and `command -v mw-remember` in the environment that
   launches Rho. Use absolute binary paths if its `PATH` differs from your
   shell.
-- Run `python3 "$RHO_DIR/hooks/mw-record.py" --selftest` to check the copied hook.
 - Validate `$RHO_DIR/hooks.toml` and `$RHO_DIR/config.toml`. Unknown keys are a
   load error in both files.
 - Run `rho mcp list` or `/mcp` inside Rho to inspect the `memorywhale` server.
@@ -223,12 +213,12 @@ Manual removal (if you installed by hand):
 
 Delete `[mcp.servers.memorywhale]` from `$RHO_DIR/config.toml`. Delete the
 `[[hook]]` block whose `id` is `memorywhale-record` from `$RHO_DIR/hooks.toml`,
-preserving any other hooks. Then remove the copied files:
+preserving any other hooks. Then remove the skill (and any leftover Python hook from an older install):
 
 ```bash
 RHO_DIR="${RHO_HOME:-$HOME/.rho}"
-rm -f "$RHO_DIR/hooks/mw-record.py"
 rm -rf "$RHO_DIR/skills/memorywhale"
+rm -f "$RHO_DIR/hooks/mw-record.py"
 ```
 
 Restart Rho. Removing the integration does not delete MemoryWhale's database

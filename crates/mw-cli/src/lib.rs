@@ -1,6 +1,8 @@
 //! Shared helpers for the MemoryWhale CLI binaries.
 
+pub mod agent_hook;
 pub mod integrate;
+pub mod remember;
 
 /// Deprecated: use [`integrate::hermes`] instead.
 #[deprecated(

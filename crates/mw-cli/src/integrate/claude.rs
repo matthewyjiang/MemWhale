@@ -8,11 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::files::{
-    atomic_write, install_bundled, parse_revert, read_or_empty, remove_bundled, write_or_remove,
-    BundledLayout,
+    atomic_write, install_skill, mw_remember_executable, parse_revert, read_or_empty,
+    remove_legacy_python_hook, remove_skill, write_or_remove, BundledLayout,
 };
-
-const HOOK_SCRIPT: &str = include_str!("../../claude-code/mw-record.py");
+use crate::agent_hook::Agent;
 
 const MCP_ADD: &str = "claude mcp add --scope user --transport stdio memorywhale -- mw-mcp";
 const MCP_REMOVE: &str = "claude mcp remove --scope user memorywhale";
@@ -29,7 +28,7 @@ pub fn cli(args: &[String]) -> Result<(), String> {
 
 struct InstallResult {
     config_dir: PathBuf,
-    hook_path: PathBuf,
+    remember_path: PathBuf,
     settings_path: PathBuf,
     skill_path: PathBuf,
     mcp: McpOutcome,
@@ -120,10 +119,10 @@ struct HookEntry {
 }
 
 impl HookEntry {
-    fn command(hook_path: &Path) -> Self {
+    fn command(remember_path: &Path) -> Self {
         Self {
             hook_type: Some("command".to_string()),
-            command: Some(hook_command(hook_path)),
+            command: Some(hook_command(remember_path)),
             extra: Map::new(),
         }
     }
@@ -138,9 +137,11 @@ impl HookEntry {
 fn install() -> Result<InstallResult, String> {
     let paths = ClaudePaths::resolve()?;
     let existing = read_or_empty(&paths.settings_path)?;
-    let (updated, settings_changed) = merge_settings(&existing, &paths.bundled.hook_path)?;
+    let remember_path = mw_remember_executable()?;
+    let (updated, settings_changed) = merge_settings(&existing, &remember_path)?;
 
-    install_bundled(&paths.bundled, HOOK_SCRIPT, super::SKILL)?;
+    install_skill(&paths.bundled, super::SKILL)?;
+    remove_legacy_python_hook(&paths.bundled.config_dir)?;
 
     if settings_changed {
         atomic_write(&paths.settings_path, &updated)?;
@@ -149,7 +150,7 @@ fn install() -> Result<InstallResult, String> {
     Ok(InstallResult {
         mcp: register_mcp(),
         config_dir: paths.bundled.config_dir,
-        hook_path: paths.bundled.hook_path,
+        remember_path,
         settings_path: paths.settings_path,
         skill_path: paths.bundled.skill_path,
     })
@@ -168,7 +169,8 @@ fn uninstall() -> Result<RevertResult, String> {
         write_or_remove(&paths.settings_path, &updated)?;
     }
 
-    let (hook_removed, skill_removed) = remove_bundled(&paths.bundled)?;
+    let hook_removed = remove_legacy_python_hook(&paths.bundled.config_dir)?;
+    let skill_removed = remove_skill(&paths.bundled)?;
 
     Ok(RevertResult {
         mcp: unregister_mcp(),
@@ -188,12 +190,30 @@ fn claude_config_dir() -> Result<PathBuf, String> {
         .map(|home| home.join(".claude"))
 }
 
-fn hook_command(hook_path: &Path) -> String {
-    format!("python3 \"{}\"", hook_path.display())
+fn hook_command(remember_path: &Path) -> String {
+    format!(
+        "\"{}\" --from-hook {}",
+        remember_path.display(),
+        Agent::Claude.as_str()
+    )
 }
 
 fn is_memorywhale_hook_command(command: &str) -> bool {
-    command.starts_with("python3 \"") && command.ends_with("hooks/mw-record.py\"")
+    let trimmed = command.trim();
+    if trimmed.starts_with("python3 \"") && trimmed.ends_with("hooks/mw-record.py\"") {
+        return true;
+    }
+    let Some((binary, rest)) = trimmed.split_once(" --from-hook") else {
+        return false;
+    };
+    let rest = rest.trim();
+    if !(rest.is_empty() || rest == "claude" || rest == "claude-code") {
+        return false;
+    }
+    Path::new(binary.trim().trim_matches('"'))
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "mw-remember")
 }
 
 fn parse_settings(existing: &str) -> Result<ClaudeSettings, String> {
@@ -248,10 +268,10 @@ fn remove_memorywhale_bash_hooks(groups: &mut Vec<HookGroup>) {
     });
 }
 
-fn merge_settings(existing: &str, hook_path: &Path) -> Result<(String, bool), String> {
+fn merge_settings(existing: &str, remember_path: &Path) -> Result<(String, bool), String> {
     let before = parse_settings(existing)?;
     let mut root = before.clone();
-    let entry = HookEntry::command(hook_path);
+    let entry = HookEntry::command(remember_path);
 
     let hooks = root.hooks.get_or_insert_with(Hooks::default);
     upsert_bash_hook(&mut hooks.post_tool_use, entry.clone());
@@ -367,7 +387,11 @@ fn unregister_mcp() -> McpOutcome {
 fn report_install(result: InstallResult) {
     println!("MemoryWhale installed for Claude Code.");
     println!("  config:   {}", result.config_dir.display());
-    println!("  hook:     {}", result.hook_path.display());
+    println!(
+        "  hook:     {} --from-hook {}",
+        result.remember_path.display(),
+        Agent::Claude.as_str()
+    );
     println!("  settings: {}", result.settings_path.display());
     println!("  skill:    {}", result.skill_path.display());
     match result.mcp {
@@ -422,7 +446,7 @@ mod tests {
 
     #[test]
     fn merge_settings_adds_bash_hook_to_empty_config() {
-        let hook = PathBuf::from("/home/me/.claude/hooks/mw-record.py");
+        let hook = PathBuf::from("/home/me/.local/bin/mw-remember");
         let (merged, changed) = merge_settings("", &hook).unwrap();
         assert!(changed);
         let value: Value = serde_json::from_str(&merged).unwrap();
@@ -439,7 +463,7 @@ mod tests {
 
     #[test]
     fn merge_settings_preserves_other_settings_and_is_idempotent() {
-        let hook = PathBuf::from("/tmp/.claude/hooks/mw-record.py");
+        let hook = PathBuf::from("/tmp/bin/mw-remember");
         let original = r#"{
   "theme": "dark",
   "hooks": {
@@ -464,7 +488,7 @@ mod tests {
 
     #[test]
     fn merge_settings_updates_stale_hook_path() {
-        let hook = PathBuf::from("/new/home/.claude/hooks/mw-record.py");
+        let hook = PathBuf::from("/new/home/.local/bin/mw-remember");
         let existing = r#"{
   "hooks": {
     "PostToolUse": [
@@ -487,13 +511,13 @@ mod tests {
 
     #[test]
     fn merge_settings_rejects_invalid_json() {
-        let err = merge_settings("{not json", &PathBuf::from("/tmp/hook.py")).unwrap_err();
+        let err = merge_settings("{not json", &PathBuf::from("/tmp/mw-remember")).unwrap_err();
         assert!(err.contains("invalid Claude settings.json"));
     }
 
     #[test]
     fn unmerge_settings_removes_only_memorywhale_bash_hook() {
-        let hook = PathBuf::from("/tmp/.claude/hooks/mw-record.py");
+        let hook = PathBuf::from("/tmp/bin/mw-remember");
         let (installed, _) = merge_settings(
             r#"{
   "theme": "dark",
@@ -534,7 +558,7 @@ mod tests {
 
     #[test]
     fn unmerge_settings_drops_empty_hook_groups() {
-        let hook = PathBuf::from("/tmp/.claude/hooks/mw-record.py");
+        let hook = PathBuf::from("/tmp/bin/mw-remember");
         let (installed, _) = merge_settings("", &hook).unwrap();
         let (reverted, changed) = unmerge_settings(&installed).unwrap();
         assert!(changed);
@@ -551,7 +575,7 @@ mod tests {
 
     #[test]
     fn merge_settings_deduplicates_memorywhale_hooks_across_bash_groups() {
-        let hook = PathBuf::from("/tmp/.claude/hooks/mw-record.py");
+        let hook = PathBuf::from("/tmp/bin/mw-remember");
         let existing = r#"{
   "hooks": {
     "PostToolUse": [
@@ -644,6 +668,26 @@ mod tests {
             0o600
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn is_memorywhale_hook_command_matches_python_and_remember() {
+        assert!(is_memorywhale_hook_command(
+            "python3 \"/home/me/.claude/hooks/mw-record.py\""
+        ));
+        assert!(is_memorywhale_hook_command(
+            "\"/usr/local/bin/mw-remember\" --from-hook"
+        ));
+        assert!(is_memorywhale_hook_command(
+            "\"/usr/local/bin/mw-remember\" --from-hook claude"
+        ));
+        assert!(!is_memorywhale_hook_command(
+            "echo mentions mw-record.py in text"
+        ));
+        assert!(!is_memorywhale_hook_command("echo --from-hook"));
+        assert!(!is_memorywhale_hook_command(
+            "\"/usr/local/bin/mw-remember\" --from-hook rho"
+        ));
     }
 
     #[test]

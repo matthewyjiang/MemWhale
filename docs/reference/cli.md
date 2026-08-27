@@ -127,6 +127,10 @@ mw-remember \
   -- cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
+Agent capture hooks spawn `mw-remember --from-hook claude` or
+`mw-remember --from-hook rho` with that client's hook JSON on stdin. No
+Python runtime is required.
+
 ## mw-screenshot — opt-in visual evidence
 
 ```bash

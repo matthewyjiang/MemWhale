@@ -2,10 +2,9 @@ use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-/// Shared hook/skill layout used by Claude Code and Rho.
+/// Shared skill layout used by Claude Code and Rho.
 pub(crate) struct BundledLayout {
     pub config_dir: PathBuf,
-    pub hook_path: PathBuf,
     pub skill_path: PathBuf,
     pub skill_dir: PathBuf,
 }
@@ -14,7 +13,6 @@ impl BundledLayout {
     pub(crate) fn from_config_dir(config_dir: PathBuf) -> Self {
         let skill_dir = config_dir.join("skills/memorywhale");
         Self {
-            hook_path: config_dir.join("hooks/mw-record.py"),
             skill_path: skill_dir.join("SKILL.md"),
             skill_dir,
             config_dir,
@@ -85,47 +83,59 @@ pub(crate) fn write_or_remove(path: &Path, contents: &str) -> Result<(), String>
     }
 }
 
-pub(crate) fn install_bundled(
-    layout: &BundledLayout,
-    hook_script: &str,
-    skill: &str,
-) -> Result<(), String> {
-    let hooks_dir = layout
-        .hook_path
-        .parent()
-        .ok_or_else(|| format!("hook path has no parent: {}", layout.hook_path.display()))?;
-    fs::create_dir_all(hooks_dir)
-        .map_err(|err| format!("failed to create {}: {err}", hooks_dir.display()))?;
+pub(crate) fn install_skill(layout: &BundledLayout, skill: &str) -> Result<(), String> {
     fs::create_dir_all(&layout.skill_dir)
         .map_err(|err| format!("failed to create {}: {err}", layout.skill_dir.display()))?;
-    fs::write(&layout.hook_path, hook_script)
-        .map_err(|err| format!("failed to write {}: {err}", layout.hook_path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&layout.hook_path, fs::Permissions::from_mode(0o755))
-            .map_err(|err| format!("failed to chmod {}: {err}", layout.hook_path.display()))?;
-    }
     fs::write(&layout.skill_path, skill)
         .map_err(|err| format!("failed to write {}: {err}", layout.skill_path.display()))?;
     Ok(())
 }
 
-pub(crate) fn remove_bundled(layout: &BundledLayout) -> Result<(bool, bool), String> {
-    let hook_removed = if layout.hook_path.is_file() {
-        fs::remove_file(&layout.hook_path)
-            .map_err(|err| format!("failed to remove {}: {err}", layout.hook_path.display()))?;
-        true
+pub(crate) fn remove_legacy_python_hook(config_dir: &Path) -> Result<bool, String> {
+    let path = config_dir.join("hooks/mw-record.py");
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(format!("failed to remove {}: {err}", path.display())),
+    }
+}
+
+/// Absolute path to `mw-remember` next to this `mw` binary, else on PATH.
+pub(crate) fn mw_remember_executable() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe()
+        .map_err(|err| format!("failed to resolve current executable: {err}"))?;
+    if let Some(dir) = exe.parent() {
+        let candidate = remember_name(dir);
+        if candidate.is_file() {
+            return Ok(fs::canonicalize(&candidate).unwrap_or(candidate));
+        }
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = remember_name(&dir);
+            if candidate.is_file() {
+                return Ok(fs::canonicalize(&candidate).unwrap_or(candidate));
+            }
+        }
+    }
+    Err("mw-remember not found next to mw or on PATH".to_string())
+}
+
+fn remember_name(dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        dir.join("mw-remember.exe")
     } else {
-        false
-    };
-    let skill_removed = if layout.skill_path.is_file() {
+        dir.join("mw-remember")
+    }
+}
+
+pub(crate) fn remove_skill(layout: &BundledLayout) -> Result<bool, String> {
+    if layout.skill_path.is_file() {
         fs::remove_file(&layout.skill_path)
             .map_err(|err| format!("failed to remove {}: {err}", layout.skill_path.display()))?;
         let _ = fs::remove_dir(&layout.skill_dir);
-        true
+        Ok(true)
     } else {
-        false
-    };
-    Ok((hook_removed, skill_removed))
+        Ok(false)
+    }
 }
