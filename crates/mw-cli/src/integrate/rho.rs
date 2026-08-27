@@ -345,49 +345,46 @@ fn require_mcp_tables(doc: &DocumentMut) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_child_table<'a>(
-    parent: &'a mut Table,
-    key: &str,
-    implicit: bool,
-) -> Result<&'a mut Table, String> {
-    let needs_insert = match parent.get(key) {
-        None => true,
-        Some(item) if item.is_table() => false,
-        Some(_) => {
-            return Err(format!(
-                "invalid Rho config.toml; {key} must be a table and the file was not changed"
-            ));
-        }
-    };
-    if needs_insert {
-        let mut child = Table::new();
-        child.set_implicit(implicit);
-        parent.insert(key, Item::Table(child));
-    }
-    Ok(parent
-        .get_mut(key)
-        .and_then(Item::as_table_mut)
-        .expect("child table was just inserted or verified"))
+fn table_like_mut(item: &mut Item) -> Result<&mut dyn TableLike, String> {
+    item.as_table_like_mut().ok_or_else(|| {
+        "invalid Rho config.toml; expected a table and the file was not changed".to_string()
+    })
 }
 
 fn memorywhale_server_table(doc: &mut DocumentMut) -> Result<&mut dyn TableLike, String> {
-    let mcp = ensure_child_table(doc.as_table_mut(), "mcp", true)?;
-    let servers = ensure_child_table(mcp, "servers", true)?;
-    let has_table_like = servers.get("memorywhale").is_some_and(Item::is_table_like);
-    if servers.contains_key("memorywhale") && !has_table_like {
+    let root = doc.as_table_mut();
+    if !root.contains_key("mcp") {
+        let mut mcp = Table::new();
+        mcp.set_implicit(true);
+        root.insert("mcp", Item::Table(mcp));
+    }
+    let mcp = table_like_mut(root.get_mut("mcp").expect("mcp was just inserted"))?;
+
+    if !mcp.contains_key("servers") {
+        let mut servers = Table::new();
+        servers.set_implicit(true);
+        mcp.insert("servers", Item::Table(servers));
+    }
+    let memorywhale_state = mcp
+        .get("servers")
+        .and_then(|servers| servers.get("memorywhale"))
+        .map(Item::is_table_like);
+    if memorywhale_state == Some(false) {
         return Err(
             "invalid Rho config.toml; mcp.servers.memorywhale must be a table and the file was not changed"
                 .to_string(),
         );
     }
-    if has_table_like {
-        return Ok(servers
-            .get_mut("memorywhale")
-            .and_then(Item::as_table_like_mut)
-            .expect("memorywhale entry was just verified as table-like"));
+
+    let servers = table_like_mut(mcp.get_mut("servers").expect("servers exists"))?;
+    if memorywhale_state.is_none() {
+        servers.insert("memorywhale", Item::Table(Table::new()));
     }
-    let table = ensure_child_table(servers, "memorywhale", false)?;
-    Ok(table)
+    table_like_mut(
+        servers
+            .get_mut("memorywhale")
+            .expect("memorywhale entry exists"),
+    )
 }
 
 fn merge_mcp(existing: &str) -> Result<(String, bool), String> {
@@ -420,7 +417,7 @@ fn unmerge_mcp(existing: &str) -> Result<(String, bool), String> {
     let Some(mcp) = doc.get_mut("mcp") else {
         return Ok((existing.to_string(), false));
     };
-    let Some(mcp_table) = mcp.as_table_mut() else {
+    let Some(mcp_table) = mcp.as_table_like_mut() else {
         return Err(
             "invalid Rho config.toml; mcp must be a table and the file was not changed".to_string(),
         );
@@ -691,6 +688,38 @@ filesystem = { transport = "stdio", command = "npx" }
         let (reverted, changed) = unmerge_mcp(original).unwrap();
         assert!(changed);
         assert!(reverted.contains("provider = \"openai\""));
+        assert!(reverted.contains("filesystem"));
+        assert!(!reverted.contains("memorywhale"));
+    }
+
+    #[test]
+    fn merge_mcp_accepts_inline_parent_tables() {
+        let original = r#"model = "gpt"
+
+[mcp]
+servers = { memorywhale = { transport = "stdio", command = "old-mcp", enabled = false } }
+"#;
+        let (merged, changed) = merge_mcp(original).unwrap();
+        assert!(changed);
+        assert!(merged.contains("model = \"gpt\""));
+        let doc = merged.parse::<DocumentMut>().unwrap();
+        let server = doc["mcp"]["servers"]["memorywhale"]
+            .as_table_like()
+            .expect("inline memorywhale table");
+        assert_eq!(server.get("command").and_then(Item::as_str), Some("mw-mcp"));
+        assert_eq!(server.get("enabled").and_then(Item::as_bool), Some(true));
+    }
+
+    #[test]
+    fn unmerge_mcp_removes_inline_parent_tables() {
+        let original = r#"model = "gpt"
+
+[mcp]
+servers = { memorywhale = { transport = "stdio", command = "mw-mcp" }, filesystem = { transport = "stdio", command = "npx" } }
+"#;
+        let (reverted, changed) = unmerge_mcp(original).unwrap();
+        assert!(changed);
+        assert!(reverted.contains("model = \"gpt\""));
         assert!(reverted.contains("filesystem"));
         assert!(!reverted.contains("memorywhale"));
     }
