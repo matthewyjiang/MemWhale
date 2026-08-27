@@ -261,9 +261,7 @@ fn as_object(value: Option<&Value>) -> Option<&serde_json::Map<String, Value>> {
 }
 
 fn nonempty_str(value: Option<&Value>) -> Option<&str> {
-    value
-        .and_then(Value::as_str)
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+    value.and_then(Value::as_str).filter(|s| !s.is_empty())
 }
 
 fn first_str(obj: Option<&serde_json::Map<String, Value>>, keys: &[&str]) -> String {
