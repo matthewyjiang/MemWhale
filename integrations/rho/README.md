@@ -221,9 +221,10 @@ evidence to outlive the current session.
 - Run `/hooks` to confirm the MemoryWhale hook is active. A session that
   started without observational hooks needs a restart to pick a new one up.
 - Run `/skills` to check skill discovery.
-- Run `mw doctor` to verify the MemoryWhale database and data directory. If
-  `MEMORYWHALE_DATA_DIR` is set, put it in the server's `env` block, not only
-  in an unrelated terminal.
+- Run `mw doctor` to verify the MemoryWhale database and data directory, and
+  to see Rho MCP, hook, and skill status separately from MemoryWhale's own
+  health. If `MEMORYWHALE_DATA_DIR` is set, put it in the server's `env` block,
+  not only in an unrelated terminal. `RHO_HOME` is honored.
 - `RHO_HOME` moves the whole Rho directory, including `hooks.toml`,
   `config.toml`, and `skills/`.
 

@@ -1,5 +1,10 @@
 //! Rho integration: capture hook, skill, and MCP registration.
 
+mod inspect;
+mod mcp;
+
+pub(crate) use inspect::doctor_report;
+
 use std::path::{Path, PathBuf};
 
 use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, TableLike};
@@ -10,7 +15,6 @@ use super::files::{
 };
 use crate::agent_hook::Agent;
 
-mod mcp;
 use mcp::{merge_mcp, unmerge_mcp, McpTarget};
 
 const HOOK_ID: &str = "memorywhale-record";

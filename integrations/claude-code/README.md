@@ -181,9 +181,10 @@ MemoryWhale's normal terminal capture paths.
   `memorywhale` server connection.
 - Run `/skills` to check skill discovery. If you created the top-level skills
   directory during an active session, restart Claude Code.
-- Run `mw doctor` to verify the MemoryWhale database and data directory. If
-  `MEMORYWHALE_DATA_DIR` is set, ensure Claude Code and your shell use the same
-  value.
+- Run `mw doctor` to verify the MemoryWhale database and data directory, and
+  to see Claude Code MCP, hook, and skill status separately from MemoryWhale's
+  own health. If `MEMORYWHALE_DATA_DIR` is set, ensure Claude Code and your
+  shell use the same value. `CLAUDE_CONFIG_DIR` is honored.
 
 ## Remove integration
 

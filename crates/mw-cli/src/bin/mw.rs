@@ -313,7 +313,7 @@ fn print_help() {
          mw context [project:name] [--last-error] [--limit N]  print a compact digest to paste into an AI agent\n\
          mw agent [session-id]    export a full session as agent-ready text to paste later (default: latest)\n\
          mw ask [question] [--chat chatgpt|claude|gemini|URL] [--session] [--no-open]  package the last failure for your chat AI\n\
-         mw doctor                check the install, shell hooks, and MCP server\n\
+         mw doctor                check the install, shell hooks, MCP server, and Claude/Rho integrations\n\
          mw global on|off|status  auto-record every new terminal by wiring a shell startup hook\n\
          mw hooks install|uninstall  always-on lightweight capture: command, cwd, exit code, duration (no output)\n\
          mw integrate claude [--revert]  install or remove Claude Code hook, skill, and MCP\n\
@@ -4026,6 +4026,7 @@ fn doctor() -> Result<(), String> {
     }
 
     let mcp_binary = sibling_binary("mw-mcp");
+    let mut mcp_stdio_ok = false;
     match probe_mcp_server(&mcp_binary, &[], Duration::from_secs(2)) {
         Ok(probe) => {
             let expected = [
@@ -4042,6 +4043,7 @@ fn doctor() -> Result<(), String> {
                 .filter(|name| !probe.tools.iter().any(|tool| tool == name))
                 .collect();
             if missing.is_empty() {
+                mcp_stdio_ok = true;
                 ok(
                     "mcp",
                     format!(
@@ -4062,6 +4064,11 @@ fn doctor() -> Result<(), String> {
         }
         Err(err) => warn("mcp", mcp_remediation(&err)),
     }
+
+    print!(
+        "{}",
+        memorywhale_cli::integrate::render_doctor_reports(mcp_stdio_ok)
+    );
 
     Ok(())
 }

@@ -31,11 +31,21 @@ pub(crate) fn parse_revert(args: &[String], usage: &str) -> Result<bool, String>
     Ok(revert)
 }
 
+/// Read `path` if it exists. `Ok(None)` means the file is absent; `Err` means
+/// it existed but could not be read.
+pub(crate) fn read_existing(path: &Path) -> Result<Option<String>, std::io::Error> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
 pub(crate) fn read_or_empty(path: &Path) -> Result<String, String> {
-    if path.exists() {
-        fs::read_to_string(path).map_err(|err| format!("failed to read {}: {err}", path.display()))
-    } else {
-        Ok(String::new())
+    match read_existing(path) {
+        Ok(Some(text)) => Ok(text),
+        Ok(None) => Ok(String::new()),
+        Err(err) => Err(format!("failed to read {}: {err}", path.display())),
     }
 }
 
@@ -126,6 +136,31 @@ fn remember_name(dir: &Path) -> PathBuf {
         dir.join("mw-remember.exe")
     } else {
         dir.join("mw-remember")
+    }
+}
+
+/// True when `name` (or `name.exe` on Windows) exists as a file on PATH.
+/// Looks at the filesystem only; does not execute the binary.
+pub(crate) fn command_on_path(name: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for dir in std::env::split_paths(&path) {
+        if dir.join(name).is_file() {
+            return true;
+        }
+        if cfg!(windows) && dir.join(format!("{name}.exe")).is_file() {
+            return true;
+        }
+    }
+    false
+}
+
+pub(crate) fn skill_is_installed(config_dir: &Path) -> bool {
+    let path = BundledLayout::from_config_dir(config_dir.to_path_buf()).skill_path;
+    match fs::read_to_string(&path) {
+        Ok(text) => !text.trim().is_empty(),
+        Err(_) => false,
     }
 }
 

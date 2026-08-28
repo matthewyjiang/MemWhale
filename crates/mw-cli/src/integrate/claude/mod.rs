@@ -1,5 +1,9 @@
 //! Claude Code integration: capture hook, skill, and MCP registration.
 
+mod inspect;
+
+pub(crate) use inspect::doctor_report;
+
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
