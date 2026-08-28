@@ -319,13 +319,17 @@ fn user_scoped_mcp_config_path_from(
     home: Option<&Path>,
 ) -> Option<PathBuf> {
     if let Some(dir) = config_dir {
-        return Some(dir.join(".claude.json"));
+        if !dir.as_os_str().is_empty() {
+            return Some(dir.join(".claude.json"));
+        }
     }
     home.map(|path| path.join(".claude.json"))
 }
 
 fn user_scoped_mcp_config_path() -> Option<PathBuf> {
-    let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
+    let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
     user_scoped_mcp_config_path_from(config_dir.as_deref(), dirs::home_dir().as_deref())
 }
 
@@ -655,6 +659,10 @@ mod tests {
         let home = PathBuf::from("/home/me");
         assert_eq!(
             user_scoped_mcp_config_path_from(None, Some(home.as_path())),
+            Some(home.join(".claude.json"))
+        );
+        assert_eq!(
+            user_scoped_mcp_config_path_from(Some(Path::new("")), Some(home.as_path())),
             Some(home.join(".claude.json"))
         );
     }

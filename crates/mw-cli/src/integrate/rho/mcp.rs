@@ -44,9 +44,15 @@ impl McpTarget {
     }
 }
 
+fn enabled_is_not_true(server: &dyn TableLike) -> bool {
+    server
+        .get("enabled")
+        .is_some_and(|item| item.as_bool() != Some(true))
+}
+
 fn mcp_server_matches(doc: &DocumentMut, target: &McpTarget) -> bool {
     memorywhale_server(doc).is_some_and(|server| {
-        if server.get("enabled").and_then(Item::as_bool) == Some(false) {
+        if enabled_is_not_true(server) {
             return false;
         }
         if server.get("transport").and_then(Item::as_str) != Some(target.transport) {
@@ -264,7 +270,7 @@ pub(super) fn merge_mcp(existing: &str, target: &McpTarget) -> Result<(String, b
             changed |= remove_authorization_from_env(server);
         }
     }
-    if server.get("enabled").and_then(Item::as_bool) == Some(false) {
+    if enabled_is_not_true(server) {
         server.insert("enabled", value(true));
         changed = true;
     }
@@ -359,10 +365,7 @@ pub(super) fn inspect_memorywhale(existing: &str) -> McpFact {
     let Some(server) = memorywhale_server(&doc) else {
         return McpFact::Absent;
     };
-    if server
-        .get("enabled")
-        .is_some_and(|item| item.as_bool() != Some(true))
-    {
+    if enabled_is_not_true(server) {
         return McpFact::Stale;
     }
     match server.get("transport").and_then(Item::as_str) {
@@ -487,6 +490,24 @@ enabled = false
 "#;
         let (merged, changed) = merge_mcp(original).unwrap();
         assert!(changed);
+        let doc = merged.parse::<DocumentMut>().unwrap();
+        let server = doc["mcp"]["servers"]["memorywhale"]
+            .as_table_like()
+            .expect("memorywhale server table");
+        assert_eq!(server.get("enabled").and_then(Item::as_bool), Some(true));
+    }
+
+    #[test]
+    fn merge_mcp_repairs_non_boolean_enabled() {
+        let original = r#"[mcp.servers.memorywhale]
+transport = "stdio"
+command = "mw-mcp"
+enabled = "false"
+"#;
+        assert_eq!(inspect_memorywhale(original), McpFact::Stale);
+        let (merged, changed) = merge_mcp(original).unwrap();
+        assert!(changed);
+        assert_eq!(inspect_memorywhale(&merged), McpFact::Stdio);
         let doc = merged.parse::<DocumentMut>().unwrap();
         let server = doc["mcp"]["servers"]["memorywhale"]
             .as_table_like()

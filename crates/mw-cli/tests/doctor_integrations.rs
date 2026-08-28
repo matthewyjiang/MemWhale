@@ -137,11 +137,18 @@ fn doctor_reports_not_detected_when_client_configs_are_absent() {
 #[test]
 fn doctor_ignores_empty_claude_config_dir() {
     let home = sandbox("empty-claude-env");
+    let cwd = sandbox("empty-claude-cwd");
     let data = home.join("mw-data");
     std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(
+        cwd.join(".claude.json"),
+        r#"{"mcpServers":{"memorywhale":{"command":"mw-mcp","args":[]}}}"#,
+    )
+    .unwrap();
 
     let output = mw_cmd()
         .args(["doctor"])
+        .current_dir(&cwd)
         .env("HOME", &home)
         .env("MEMORYWHALE_DATA_DIR", &data)
         .env("CLAUDE_CONFIG_DIR", "")
@@ -152,7 +159,9 @@ fn doctor_ignores_empty_claude_config_dir() {
     assert!(output.status.success(), "doctor failed: {output:?}");
     let text = stdout(&output);
     assert!(text.contains("Claude Code\n    not detected"), "{text}");
+    assert!(!text.contains("configured"), "{text}");
     let _ = std::fs::remove_dir_all(&home);
+    let _ = std::fs::remove_dir_all(&cwd);
 }
 
 #[test]
