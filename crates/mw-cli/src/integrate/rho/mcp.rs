@@ -3,6 +3,7 @@
 use toml_edit::{value, DocumentMut, InlineTable, Item, Table, TableLike};
 
 use super::{parse_toml, set_string};
+use crate::integrate::report::McpFact;
 
 const MCP_COMMAND: &str = "mw-mcp";
 const MCP_TRANSPORT: &str = "stdio";
@@ -43,9 +44,15 @@ impl McpTarget {
     }
 }
 
+fn enabled_is_not_true(server: &dyn TableLike) -> bool {
+    server
+        .get("enabled")
+        .is_some_and(|item| item.as_bool() != Some(true))
+}
+
 fn mcp_server_matches(doc: &DocumentMut, target: &McpTarget) -> bool {
     memorywhale_server(doc).is_some_and(|server| {
-        if server.get("enabled").and_then(Item::as_bool) == Some(false) {
+        if enabled_is_not_true(server) {
             return false;
         }
         if server.get("transport").and_then(Item::as_str) != Some(target.transport) {
@@ -263,7 +270,7 @@ pub(super) fn merge_mcp(existing: &str, target: &McpTarget) -> Result<(String, b
             changed |= remove_authorization_from_env(server);
         }
     }
-    if server.get("enabled").and_then(Item::as_bool) == Some(false) {
+    if enabled_is_not_true(server) {
         server.insert("enabled", value(true));
         changed = true;
     }
@@ -340,6 +347,41 @@ fn remove_authorization_from_env(table: &mut dyn TableLike) -> bool {
         table.remove("headers_from_env");
     }
     true
+}
+
+/// Read-only classification of the MemoryWhale MCP stanza. Never returns URLs,
+/// headers, or tokens.
+pub(super) fn inspect_memorywhale(existing: &str) -> McpFact {
+    if existing.trim().is_empty() {
+        return McpFact::Absent;
+    }
+    let doc = match parse_toml(existing, "config.toml") {
+        Ok(doc) => doc,
+        Err(_) => return McpFact::Unreadable,
+    };
+    if require_mcp_tables(&doc).is_err() {
+        return McpFact::Unreadable;
+    }
+    let Some(server) = memorywhale_server(&doc) else {
+        return McpFact::Absent;
+    };
+    if enabled_is_not_true(server) {
+        return McpFact::Stale;
+    }
+    match server.get("transport").and_then(Item::as_str) {
+        Some(MCP_TRANSPORT) => {
+            if server.get("command").and_then(Item::as_str) == Some(MCP_COMMAND) {
+                McpFact::Stdio
+            } else {
+                McpFact::Stale
+            }
+        }
+        Some(MCP_HTTP_TRANSPORT) => match server.get("url").and_then(Item::as_str) {
+            Some(url) if url.starts_with("http://") || url.starts_with("https://") => McpFact::Http,
+            _ => McpFact::Stale,
+        },
+        _ => McpFact::Stale,
+    }
 }
 
 pub(super) fn unmerge_mcp(existing: &str) -> Result<(String, bool), String> {
@@ -448,6 +490,24 @@ enabled = false
 "#;
         let (merged, changed) = merge_mcp(original).unwrap();
         assert!(changed);
+        let doc = merged.parse::<DocumentMut>().unwrap();
+        let server = doc["mcp"]["servers"]["memorywhale"]
+            .as_table_like()
+            .expect("memorywhale server table");
+        assert_eq!(server.get("enabled").and_then(Item::as_bool), Some(true));
+    }
+
+    #[test]
+    fn merge_mcp_repairs_non_boolean_enabled() {
+        let original = r#"[mcp.servers.memorywhale]
+transport = "stdio"
+command = "mw-mcp"
+enabled = "false"
+"#;
+        assert_eq!(inspect_memorywhale(original), McpFact::Stale);
+        let (merged, changed) = merge_mcp(original).unwrap();
+        assert!(changed);
+        assert_eq!(inspect_memorywhale(&merged), McpFact::Stdio);
         let doc = merged.parse::<DocumentMut>().unwrap();
         let server = doc["mcp"]["servers"]["memorywhale"]
             .as_table_like()
@@ -753,5 +813,41 @@ headers_from_env = { Authorization = 1 }
             server["headers_from_env"]["Authorization"].as_str(),
             Some("MEMORYWHALE_AUTHORIZATION")
         );
+    }
+
+    #[test]
+    fn inspect_memorywhale_classifies_stdio_http_stale_and_absent() {
+        assert_eq!(inspect_memorywhale(""), McpFact::Absent);
+        assert_eq!(inspect_memorywhale("model = ["), McpFact::Unreadable);
+
+        let (stdio, _) = merge_mcp("").unwrap();
+        assert_eq!(inspect_memorywhale(&stdio), McpFact::Stdio);
+
+        let http = r#"[mcp.servers.memorywhale]
+transport = "streamable_http"
+url = "http://127.0.0.1:7071/mcp"
+headers = { Authorization = "Bearer supersecret-token" }
+"#;
+        assert_eq!(inspect_memorywhale(http), McpFact::Http);
+
+        let stale = r#"[mcp.servers.memorywhale]
+transport = "stdio"
+command = "/missing/mw-mcp"
+"#;
+        assert_eq!(inspect_memorywhale(stale), McpFact::Stale);
+
+        let disabled = r#"[mcp.servers.memorywhale]
+transport = "stdio"
+command = "mw-mcp"
+enabled = false
+"#;
+        assert_eq!(inspect_memorywhale(disabled), McpFact::Stale);
+
+        let enabled_string = r#"[mcp.servers.memorywhale]
+transport = "stdio"
+command = "mw-mcp"
+enabled = "false"
+"#;
+        assert_eq!(inspect_memorywhale(enabled_string), McpFact::Stale);
     }
 }

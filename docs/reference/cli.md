@@ -40,7 +40,7 @@ mw context [project:name] [--last-error] [--limit N]   # compact failures digest
 mw agent [session-id]                 # export a full session as text to paste into an agent
 mw ask [question] [--chat gemini]     # package the last failure for your chat AI → clipboard
 mw pet [--watch]                      # show the whale whose mood reflects the memory store
-mw doctor                             # check the install, shell hooks, and MCP server
+mw doctor                             # check the install, shell hooks, MCP server, and Claude/Rho integrations
 mw export [project:name]              # export a bundle (Markdown + JSON + SQLite)
 mw import <bundle|sqlite>             # merge another machine's export
 mw push <ssh-host>                    # send this machine's memory to another (scp + remote import)
@@ -95,6 +95,13 @@ read-only MCP handshake and `tools/list` request. It reports whether the
 binary is missing, timed out, returned an invalid response, or advertised the
 expected six tools. It never calls a memory tool or edits a client
 configuration.
+
+After those install checks, `mw doctor` prints an Integrations section for
+Claude Code and Rho. MCP registration, the auto-capture hook, and the bundled
+skill are reported independently. Missing optional pieces tell you to run
+`mw integrate <client>`. Absent client configs or CLIs are `not detected`,
+not a failed MemoryWhale install. `CLAUDE_CONFIG_DIR` and `RHO_HOME` are
+honored. Doctor does not run client CLIs or print tokens.
 
 `mw git-fix` recognizes a handful of common git failure shapes — push rejected
 (non-fast-forward), merge conflicts, a dirty working tree blocking an

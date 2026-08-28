@@ -19,13 +19,13 @@ command writes to `~/.hermes/config.yaml`.
 
 ## `CLAUDE_CONFIG_DIR`
 
-Used by `mw integrate claude` to locate Claude Code configuration. Without it,
-the command writes to `~/.claude/`.
+Used by `mw integrate claude` and `mw doctor` to locate Claude Code
+configuration. Without it, those commands use `~/.claude/`.
 
 ## `RHO_HOME`
 
-Used by `mw integrate rho` to locate Rho configuration. Without it, the command
-writes to `~/.rho/`.
+Used by `mw integrate rho` and `mw doctor` to locate Rho configuration. Without
+it, those commands use `~/.rho/`.
 
 Additional command-specific variables are documented beside their commands in
 the [CLI reference](cli.md).

@@ -37,7 +37,7 @@ _mw() {
     'tui:interactive terminal browser'
     'sync-mempalace:mirror memories into MemPalace'
     'git-fix:diagnose the last failed git command'
-    'doctor:check the install'
+    'doctor:check the install, shell hooks, MCP server, and Claude/Rho integrations'
     'global:auto-record every new terminal (on/off/status)'
     'status:show global auto-record state'
     'hooks:install or remove shell auto-record hooks'
