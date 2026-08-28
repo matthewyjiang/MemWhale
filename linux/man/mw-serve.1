@@ -10,6 +10,7 @@ mw-serve \- serve the MemoryWhale memory store as a local web dashboard
 .IR n ]
 .RI [ --token
 .IR secret ]
+.RI [ --print-token ]
 .SH DESCRIPTION
 .B mw-serve
 runs a small, dependency-free HTTP server that renders the local MemoryWhale
@@ -32,14 +33,43 @@ Address to bind. Default
 .B --lan
 Bind to
 .BR 0.0.0.0 .
-LAN access requires
-.B MEMORYWHALE_TOKEN
-or
-.BR --token .
+LAN access requires a token:
+.B MEMORYWHALE_TOKEN ,
+.BR --token ,
+or a minted
+.B serve.token
+file.
 .TP
 .BI "--port " n
 TCP port to listen on. Default
 .BR 7071 .
+.TP
+.B --print-token
+Print the token this process would use and exit without binding.
+This can mint
+.B serve.token
+even without
+.BR --lan .
+Default loopback serving stays open unless
+.B --token
+or
+.B MEMORYWHALE_TOKEN
+is set.
+.PP
+.B POST /mcp
+on the same port is one JSON-RPC object per request (no SSE session).
+Clients may send
+.B 2026-07-28
+.B _meta
+on each request, or a legacy
+.B initialize
+handshake then
+.BR tools/list .
+Loopback is open by default. An explicit
+.B --token
+or a LAN bind requires
+.B Authorization: Bearer
+matching the dashboard token.
 .SH EXAMPLES
 .TP
 Localhost only:

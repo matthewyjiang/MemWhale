@@ -19,6 +19,31 @@ over its standard input and output. It does not listen on a network port and
 has no separate protocol authentication. The spawning process and the
 permissions of the operating-system user establish the local trust context.
 
+`mw-serve` also exposes the same six tools at `POST /mcp` on the dashboard
+port (default `http://127.0.0.1:7071/mcp`). HTTP MCP is one JSON-RPC object
+per POST, not an SSE session. Clients may send `2026-07-28` `_meta` on each
+request, or the usual `initialize` handshake then `tools/list` without
+`_meta` (Rho `streamable_http` does this). Loopback is open by default. If
+`--token` is set, MCP clients must send `Authorization: Bearer <token>`. A
+non-loopback bind always requires a token.
+`--lan` mints `serve.token` in the MemoryWhale data directory when no token
+is supplied. `mw-serve --lan --print-token` prints that LAN token.
+`--print-token` alone can still mint `serve.token`; tokenless loopback serving
+ignores that file. Loopback authentication is enabled when `--token` or
+`MEMORYWHALE_TOKEN` is set. A Rho client on another machine stores
+`Bearer <token>` in `mcp-authorization` under that same data directory and sets
+`headers_from_env = { Authorization = "MEMORYWHALE_AUTHORIZATION" }`. The
+data directory is `$MEMORYWHALE_DATA_DIR` when set, otherwise the platform
+default (`~/.local/share/MemoryWhale/` on Linux, `~/Library/Application
+Support/MemoryWhale/` on macOS). `mw integrate rho --http --token` prints
+the export line with the resolved path. Export that file as
+`MEMORYWHALE_AUTHORIZATION` in the Rho process; the MemoryWhale capture hook
+does not load it. Rho 2.2.0+ needs `allow_insecure_http = true` for a
+cleartext LAN URL. `mw integrate rho` still defaults to stdio; `mw integrate
+rho --http [url]` writes Rho's `streamable_http` transport key pointing at
+this POST endpoint. `--revert` removes the client `mcp-authorization` copy
+and leaves `serve.token` in place.
+
 A process running as the same OS user may already be able to read the
 MemoryWhale database and environment. MCP access nevertheless matters because
 it gives an agent a supported interface for retrieving terminal evidence and
@@ -52,11 +77,17 @@ the versions it supports, and returns JSON-RPC error `-32022` with `supported`
 and `requested` version data when no match is possible. Current responses use
 the revision's `resultType`, capability, cache, and server metadata fields.
 
-Legacy clients may still open the stdio process with an `initialize` request
-for either supported legacy revision, followed by `notifications/initialized`.
+Legacy clients may still open with an `initialize` request for either
+supported legacy revision, followed by `notifications/initialized`. That
+handshake works on stdio and on `POST /mcp`.
 For another initialization revision, the server negotiates `2025-11-25` as its
 latest supported legacy revision. Protocol selection does not change the six
 MemoryWhale tools or their semantics.
+
+`remember` attribution follows the transport. Stdio keeps the initialize
+`clientInfo.name` for the process. HTTP is one POST at a time, so a later
+`tools/call` without `_meta` is stored as a generic agent write. Current
+clients that send `clientInfo` in `_meta` keep their name on that request.
 
 A direct current-protocol discovery check is:
 
@@ -102,7 +133,7 @@ against that registry.
 
 | Tool | Purpose | Args | Returns |
 | --- | --- | --- | --- |
-| `recent_errors` | Recent failed commands (non-zero exit) with their error output — start here when debugging a recurring failure. | `limit` (int, default 8) | A list of failed runs: command, exit code, cwd, the salient stderr line, and any note. |
+| `recent_errors` | Recent failed commands (non-zero exit) with their error output — start here when debugging a recurring failure. | `limit` (int, default 8, max 64) | A list of failed runs: command, exit code, cwd, the salient stderr line, and any note. |
 | `search_memory` | Search remembered commands, sessions, and notes for a term, ranked by the explainable engine. | `query` (string, **required**); `project`, `machine` (string, optional scope) | Ranked hits with a score, a snippet, and the reasons each ranked where it did. |
 | `get_context` | The most relevant remembered memory, engine-ranked, optionally scoped. | `project`, `machine` (string, optional) | Up to 8 ranked hits, each with score, snippet, and reasons. |
 | `remember` | Save a freeform lesson or conclusion so future sessions don't re-derive it. | `text` (string, **required**) | Confirmation with the new memory id; findable later via `search_memory`/`get_context`. |
