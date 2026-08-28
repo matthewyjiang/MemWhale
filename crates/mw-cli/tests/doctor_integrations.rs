@@ -158,8 +158,9 @@ fn doctor_ignores_empty_claude_config_dir() {
         .expect("run mw doctor");
     assert!(output.status.success(), "doctor failed: {output:?}");
     let text = stdout(&output);
-    assert!(text.contains("Claude Code\n    not detected"), "{text}");
-    assert!(!text.contains("configured"), "{text}");
+    let claude_block = client_block(&text, "Claude Code", "Rho");
+    assert!(claude_block.contains("    not detected"), "{text}");
+    assert!(!claude_block.contains("configured"), "{text}");
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&cwd);
 }
