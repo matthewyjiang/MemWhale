@@ -16,7 +16,7 @@ use crate::integrate::report::{IntegrationReport, McpFact, PieceStatus};
 /// Inspect Claude Code MCP, hook, and skill status without mutating files or
 /// running the Claude CLI.
 pub(crate) fn doctor_report(mcp_stdio_ok: bool) -> IntegrationReport {
-    let env_set = std::env::var_os("CLAUDE_CONFIG_DIR").is_some();
+    let env_set = std::env::var_os("CLAUDE_CONFIG_DIR").is_some_and(|value| !value.is_empty());
     let Ok(config_dir) = claude_config_dir() else {
         return IntegrationReport::not_detected("Claude Code", "claude");
     };
@@ -58,10 +58,13 @@ fn inspect_mcp(mcp_config_path: &Path) -> McpFact {
     let Ok(value) = serde_json::from_str::<Value>(&content) else {
         return McpFact::Unreadable;
     };
-    match value
-        .get("mcpServers")
-        .and_then(|servers| servers.get(MCP_SERVER_NAME))
-    {
+    let Some(servers) = value.get("mcpServers") else {
+        return McpFact::Absent;
+    };
+    let Some(servers) = servers.as_object() else {
+        return McpFact::Unreadable;
+    };
+    match servers.get(MCP_SERVER_NAME) {
         None => McpFact::Absent,
         Some(entry) if mcp_server_entry_matches(entry) => McpFact::Stdio,
         Some(_) => McpFact::Stale,
@@ -110,15 +113,16 @@ fn memorywhale_bash_commands(groups: &[HookGroup]) -> Vec<String> {
 }
 
 fn hook_commands_current(commands: &[String], remember_path: Option<&Path>) -> bool {
-    commands
-        .iter()
-        .any(|command| hook_command_is_current(command, remember_path))
+    !commands.is_empty()
+        && commands
+            .iter()
+            .all(|command| hook_command_is_current(command, remember_path))
 }
 
 fn hook_command_is_current(command: &str, remember_path: Option<&Path>) -> bool {
     match remember_path {
         Some(path) => command.trim() == hook_command(path),
-        None => is_memorywhale_hook_command(command) && !command.trim().starts_with("python3 \""),
+        None => false,
     }
 }
 
@@ -224,6 +228,68 @@ mod tests {
         assert_eq!(report.mcp, McpStatus::Unreadable);
         assert_eq!(report.hook, PieceStatus::Unreadable);
         assert_eq!(report.skill, PieceStatus::Installed);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inspect_missing_helper_does_not_report_hook_installed() {
+        let dir = sandbox("no-helper");
+        let remember = remember();
+        let (settings, _) = merge_settings("", &remember).unwrap();
+        let stale = settings.replace(
+            remember.display().to_string().as_str(),
+            "/old/bin/mw-remember",
+        );
+        std::fs::write(dir.join("settings.json"), stale).unwrap();
+        let report = inspect_at(&dir, &dir.join(".claude.json"), None, false);
+        assert_eq!(report.hook, PieceStatus::Stale);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inspect_mixed_current_and_stale_hook_is_stale() {
+        let dir = sandbox("mixed-hooks");
+        let remember = remember();
+        let current = hook_command(&remember);
+        let settings = serde_json::json!({
+            "hooks": {
+                "PostToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [
+                        {"type": "command", "command": current},
+                        {"type": "command", "command": "\"/old/bin/mw-remember\" --from-hook claude"}
+                    ]
+                }],
+                "PostToolUseFailure": [{
+                    "matcher": "Bash",
+                    "hooks": [
+                        {"type": "command", "command": current}
+                    ]
+                }]
+            }
+        });
+        std::fs::write(dir.join("settings.json"), settings.to_string()).unwrap();
+        let report = inspect_at(&dir, &dir.join(".claude.json"), Some(&remember), false);
+        assert_eq!(report.hook, PieceStatus::Stale);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inspect_invalid_mcp_servers_container_is_unreadable() {
+        let dir = sandbox("mcp-array");
+        std::fs::write(dir.join(".claude.json"), r#"{"mcpServers":[]}"#).unwrap();
+        let report = inspect_at(&dir, &dir.join(".claude.json"), Some(&remember()), true);
+        assert_eq!(report.mcp, McpStatus::Unreadable);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inspect_unreadable_skill_is_not_absence() {
+        let dir = sandbox("bad-skill");
+        std::fs::create_dir_all(dir.join("skills/memorywhale")).unwrap();
+        std::fs::write(dir.join("skills/memorywhale/SKILL.md"), [0xff, 0xfe]).unwrap();
+        let report = inspect_at(&dir, &dir.join(".claude.json"), Some(&remember()), false);
+        assert_eq!(report.skill, PieceStatus::Unreadable);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

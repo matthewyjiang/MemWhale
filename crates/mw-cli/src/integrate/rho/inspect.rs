@@ -74,8 +74,7 @@ fn inspect_hook(config_dir: &Path, remember_path: Option<&Path>) -> PieceStatus 
     };
     match remember_path {
         Some(path) if hook_matches(table, path) => PieceStatus::Installed,
-        Some(_) => PieceStatus::Stale,
-        None => PieceStatus::Installed,
+        _ => PieceStatus::Stale,
     }
 }
 
@@ -169,6 +168,27 @@ headers = { Authorization = "Bearer supersecret-token" }
         let rendered = http.render();
         assert!(!rendered.contains("supersecret-token"));
         assert!(!rendered.contains("127.0.0.1"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inspect_missing_helper_does_not_report_hook_installed() {
+        let dir = sandbox("no-helper");
+        let (hooks, _) = merge_hooks("", &remember()).unwrap();
+        let stale = hooks.replace("/home/me/.local/bin/mw-remember", "/old/bin/mw-remember");
+        std::fs::write(dir.join("hooks.toml"), stale).unwrap();
+        let report = inspect_at(&dir, None, false);
+        assert_eq!(report.hook, PieceStatus::Stale);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inspect_unreadable_skill_is_not_absence() {
+        let dir = sandbox("bad-skill");
+        std::fs::create_dir_all(dir.join("skills/memorywhale")).unwrap();
+        std::fs::write(dir.join("skills/memorywhale/SKILL.md"), [0xff, 0xfe]).unwrap();
+        let report = inspect_at(&dir, Some(&remember()), false);
+        assert_eq!(report.skill, PieceStatus::Unreadable);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

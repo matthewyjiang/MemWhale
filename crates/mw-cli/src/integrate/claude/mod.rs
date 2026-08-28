@@ -187,7 +187,9 @@ fn uninstall() -> Result<RevertResult, String> {
 
 fn claude_config_dir() -> Result<PathBuf, String> {
     if let Some(path) = std::env::var_os("CLAUDE_CONFIG_DIR") {
-        return Ok(PathBuf::from(path));
+        if !path.is_empty() {
+            return Ok(PathBuf::from(path));
+        }
     }
     dirs::home_dir()
         .ok_or_else(|| "could not resolve the home directory".to_string())

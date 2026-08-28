@@ -156,11 +156,15 @@ pub(crate) fn command_on_path(name: &str) -> bool {
     false
 }
 
-pub(crate) fn skill_is_installed(config_dir: &Path) -> bool {
-    let path = BundledLayout::from_config_dir(config_dir.to_path_buf()).skill_path;
-    match fs::read_to_string(&path) {
-        Ok(text) => !text.trim().is_empty(),
-        Err(_) => false,
+/// Whether the bundled skill file is present and nonempty.
+///
+/// `Err` means the file exists but could not be read (permissions or invalid
+/// UTF-8). Callers must not treat that as absence.
+pub(crate) fn skill_is_installed(config_dir: &Path) -> Result<bool, std::io::Error> {
+    match read_existing(&BundledLayout::from_config_dir(config_dir.to_path_buf()).skill_path) {
+        Ok(Some(text)) => Ok(!text.trim().is_empty()),
+        Ok(None) => Ok(false),
+        Err(err) => Err(err),
     }
 }
 

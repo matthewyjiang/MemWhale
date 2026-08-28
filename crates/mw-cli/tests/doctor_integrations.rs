@@ -32,6 +32,17 @@ fn stdout(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+fn client_block<'a>(text: &'a str, title: &str, next_title: &str) -> &'a str {
+    let start = format!("  {title}\n");
+    let after = text.split(&start).nth(1).unwrap_or("");
+    if next_title.is_empty() {
+        after
+    } else {
+        let next = format!("  {next_title}\n");
+        after.split(&next).next().unwrap_or(after)
+    }
+}
+
 fn assert_core_diagnostics_present(text: &str) {
     assert!(text.contains("MemoryWhale doctor"), "{text}");
     assert!(text.contains("data dir"), "{text}");
@@ -65,23 +76,34 @@ fn doctor_honors_custom_claude_and_rho_dirs_and_ignores_home_decoys() {
     assert!(output.status.success(), "doctor failed: {output:?}");
     let text = stdout(&output);
     assert_core_diagnostics_present(&text);
+
+    let claude_block = client_block(&text, "Claude Code", "Rho");
     assert!(
-        text.contains("not configured; run `mw integrate claude`"),
+        claude_block.contains("MCP                 not configured; run `mw integrate claude`"),
         "{text}"
     );
     assert!(
-        text.contains("not installed; run `mw integrate claude`"),
+        claude_block.contains("auto-capture hook   not installed; run `mw integrate claude`"),
         "{text}"
     );
     assert!(
-        text.contains("not configured; run `mw integrate rho`"),
+        claude_block.contains("skill               not installed; run `mw integrate claude`"),
+        "{text}"
+    );
+
+    let rho_block = client_block(&text, "Rho", "");
+    assert!(
+        rho_block.contains("MCP                 not configured; run `mw integrate rho`"),
         "{text}"
     );
     assert!(
-        text.contains("not installed; run `mw integrate rho`"),
+        rho_block.contains("auto-capture hook   not installed; run `mw integrate rho`"),
         "{text}"
     );
-    assert!(!text.contains("decoy skill"), "{text}");
+    assert!(
+        rho_block.contains("skill               not installed; run `mw integrate rho`"),
+        "{text}"
+    );
     let _ = std::fs::remove_dir_all(&home);
     let _ = std::fs::remove_dir_all(&claude);
     let _ = std::fs::remove_dir_all(&rho);
@@ -109,6 +131,27 @@ fn doctor_reports_not_detected_when_client_configs_are_absent() {
     assert!(text.contains("Rho\n    not detected"), "{text}");
     assert!(!text.contains("mw integrate claude"), "{text}");
     assert!(!text.contains("mw integrate rho"), "{text}");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn doctor_ignores_empty_claude_config_dir() {
+    let home = sandbox("empty-claude-env");
+    let data = home.join("mw-data");
+    std::fs::create_dir_all(&data).unwrap();
+
+    let output = mw_cmd()
+        .args(["doctor"])
+        .env("HOME", &home)
+        .env("MEMORYWHALE_DATA_DIR", &data)
+        .env("CLAUDE_CONFIG_DIR", "")
+        .env_remove("RHO_HOME")
+        .env("PATH", "")
+        .output()
+        .expect("run mw doctor");
+    assert!(output.status.success(), "doctor failed: {output:?}");
+    let text = stdout(&output);
+    assert!(text.contains("Claude Code\n    not detected"), "{text}");
     let _ = std::fs::remove_dir_all(&home);
 }
 

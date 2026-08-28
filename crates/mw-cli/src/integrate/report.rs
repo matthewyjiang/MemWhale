@@ -35,11 +35,11 @@ pub(crate) enum PieceStatus {
 }
 
 impl PieceStatus {
-    pub(crate) fn skill(installed: bool) -> Self {
-        if installed {
-            Self::Installed
-        } else {
-            Self::NotInstalled
+    pub(crate) fn skill(result: Result<bool, std::io::Error>) -> Self {
+        match result {
+            Ok(true) => Self::Installed,
+            Ok(false) => Self::NotInstalled,
+            Err(_) => Self::Unreadable,
         }
     }
 

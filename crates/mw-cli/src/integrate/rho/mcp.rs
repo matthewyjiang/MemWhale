@@ -359,7 +359,10 @@ pub(super) fn inspect_memorywhale(existing: &str) -> McpFact {
     let Some(server) = memorywhale_server(&doc) else {
         return McpFact::Absent;
     };
-    if server.get("enabled").and_then(Item::as_bool) == Some(false) {
+    if server
+        .get("enabled")
+        .is_some_and(|item| item.as_bool() != Some(true))
+    {
         return McpFact::Stale;
     }
     match server.get("transport").and_then(Item::as_str) {
@@ -818,5 +821,12 @@ command = "mw-mcp"
 enabled = false
 "#;
         assert_eq!(inspect_memorywhale(disabled), McpFact::Stale);
+
+        let enabled_string = r#"[mcp.servers.memorywhale]
+transport = "stdio"
+command = "mw-mcp"
+enabled = "false"
+"#;
+        assert_eq!(inspect_memorywhale(enabled_string), McpFact::Stale);
     }
 }
