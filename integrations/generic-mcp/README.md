@@ -1,23 +1,16 @@
-# Generic stdio MCP integration
+# Generic stdio MCP + MemoryWhale
 
 ## Status
 
 Supported interface contract for any MCP client that can launch a local stdio
-server.
+server. Tool names and transport checks follow the
+[MCP reference](../../docs/reference/mcp.md).
 
 ## Requirements
 
 - MemoryWhale installed.
 - `mw-mcp` available on the `PATH` seen by the client.
 - A client that supports local stdio MCP servers.
-
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory read/write | Yes |
-| Automatic execution capture | No |
-| Memory-use guidance | Client-specific |
 
 ## Setup
 
@@ -49,16 +42,20 @@ See the [protocol compatibility reference](../../docs/reference/mcp.md#protocol-
 Then verify tool discovery in the client. The authoritative tool descriptions
 are in the [MCP reference](../../docs/reference/mcp.md).
 
-## How to use
+## Available capabilities
 
-Ask the client:
-
-> Use MemoryWhale to check whether I have encountered a similar failure before.
-
-## Automatic capture
+| Capability | Available |
+| --- | --- |
+| MCP memory access | Yes |
+| Automatic execution capture | No |
+| Memory-use guidance | Client-specific |
 
 The generic MCP connection does not record normal terminal or agent commands.
 Use MemoryWhale's terminal capture or a verified client-specific hook.
+
+## Example prompt
+
+> Use MemoryWhale to check whether I have encountered a similar failure before.
 
 ## Troubleshooting
 
@@ -67,7 +64,7 @@ Use MemoryWhale's terminal capture or a verified client-specific hook.
 - If the wrong database opens, set `MEMORYWHALE_DATA_DIR` in the server entry.
 - Run `mw doctor` to verify the local installation.
 
-## Remove integration
+## Uninstall
 
 Delete the `memorywhale` server entry from the client's MCP configuration and
 restart the client. This does not delete the local MemoryWhale database.

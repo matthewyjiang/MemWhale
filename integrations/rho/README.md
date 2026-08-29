@@ -23,14 +23,6 @@ The hook and skill are optional repository-provided components.
 - A local checkout of this repository to copy the skill (only for manual
   setup; `mw integrate rho` needs no checkout).
 
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory access | Yes |
-| Automatic execution capture | Yes, optional `after_tool_use` hook for bash and powershell |
-| Memory-use guidance | Yes, optional skill |
-
 ## Setup
 
 From any machine with MemoryWhale installed:
@@ -152,7 +144,15 @@ rho mcp show memorywhale
 In Rho, run `/mcp` and confirm `memorywhale` is listed, and `/skills` for the
 skill. `/hooks` should show `user:memorywhale-record` as active.
 
-## How to use
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | Yes |
+| Automatic execution capture | Yes, optional `after_tool_use` hook for bash and powershell |
+| Memory-use guidance | Yes, optional skill |
+
+### How to use
 
 The MCP server lets Rho read prior failures and explicitly save lessons. The
 skill prompts Rho to consult those tools when a failure may have happened
@@ -162,13 +162,7 @@ bash and powershell tool calls when the event payload includes command text.
 The skill falls back to `mw context`, `mw search`, and `mw remember` when the
 MCP server is not connected, so each component can be installed separately.
 
-## Example prompt
-
-> Use MemoryWhale to check whether I encountered a similar failure before.
-> Explain the relevant saved evidence before suggesting a fix, then remember
-> the root cause after it is verified.
-
-## Automatic capture
+### Automatic capture
 
 `mw-remember --from-hook rho` receives Rho's hook JSON on standard input. It
 matches `after_tool_use` for `bash` and `powershell`, then records command
@@ -189,7 +183,7 @@ complete evidence.
 Commands run in an ordinary terminal are captured only through MemoryWhale's
 normal terminal capture paths. MCP access alone is not automatic capture.
 
-## How Rho sessions and MemoryWhale differ
+### How Rho sessions and MemoryWhale differ
 
 Rho keeps its own saved session transcripts in `~/.rho/sessions/` and may
 compact or summarize them. MemoryWhale stores durable evidence in its own
@@ -199,7 +193,7 @@ MemoryWhale data survives Rho restarts and machine transfers. Use `mw agent`
 or `mw context` to bridge a Rho session into MemoryWhale when you want the
 evidence to outlive the current session.
 
-## Limitations
+### Limitations
 
 - The bundled hook captures only bash and powershell.
 - `before_tool_use` is not used, because a crash or timeout there denies the
@@ -209,6 +203,12 @@ evidence to outlive the current session.
 - Guidance helps Rho choose when to use memory, but does not force a tool call
   on every failure.
 - Secret redaction reduces accidental retention but is not a security boundary.
+
+## Example prompt
+
+> Use MemoryWhale to check whether I encountered a similar failure before.
+> Explain the relevant saved evidence before suggesting a fix, then remember
+> the root cause after it is verified.
 
 ## Troubleshooting
 
@@ -228,7 +228,7 @@ evidence to outlive the current session.
 - `RHO_HOME` moves the whole Rho directory, including `hooks.toml`,
   `config.toml`, and `skills/`.
 
-## Remove integration
+## Uninstall
 
 ```bash
 mw integrate rho --revert

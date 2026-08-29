@@ -16,6 +16,24 @@ labels: documentation, good first issue
 Docs + config only, mirroring an existing folder (e.g. `integrations/codex/`).
 No Rust.
 
+## Canonical guide structure
+
+Follow [integrations/TEMPLATE.md](../../integrations/TEMPLATE.md). Every
+README must use these headings, in this order:
+
+1. Status
+2. Requirements
+3. Setup
+4. Verify
+5. Available capabilities
+6. Example prompt
+7. Troubleshooting
+8. Uninstall
+
+Write "Not applicable" plus a reason when a section does not apply. Do not
+copy another client’s commands or paths; verify them against the tool’s
+current documentation.
+
 ## What to do
 1. Create `integrations/<tool>/` with a config snippet registering a stdio
    server whose command is `mw-mcp`.

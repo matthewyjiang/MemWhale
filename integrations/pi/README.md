@@ -19,15 +19,7 @@ software and review them before installing.
 - A shell environment where Pi and MemoryWhale use the intended
   `MEMORYWHALE_DATA_DIR`, if a non-default store is needed.
 
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory access | Unverified; no native Pi MCP setup is documented here |
-| Automatic execution capture | No |
-| Memory-use guidance | Yes, through a Pi project instruction or extension |
-
-## Setup: use the CLI today
+## Setup
 
 MemoryWhale can be used with Pi without a Pi-specific plugin. Capture a command
 explicitly, then give Pi the retrieved context:
@@ -45,7 +37,7 @@ For a different store, set the variable in the same shell environment:
 MEMORYWHALE_DATA_DIR=/path/to/store mw context --last-error
 ```
 
-## Optional Pi guidance
+### Optional Pi guidance
 
 Pi supports project-local extensions and other project resources. Add a short
 instruction to the project guidance you already use, or create a trusted Pi
@@ -72,20 +64,32 @@ An empty store may return an empty context. That is expected. If you later add
 an MCP adapter, verify its tool discovery separately and use the canonical
 [MCP reference](../../docs/reference/mcp.md) for the six MemoryWhale tools.
 
-## Automatic capture
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | Unverified; no native Pi MCP setup is documented here |
+| Automatic execution capture | No |
+| Memory-use guidance | Yes, through a Pi project instruction or extension |
+
+### Automatic capture
 
 This integration does not automatically record Pi prompts, responses, or shell
 commands. `mw-run` captures an explicitly wrapped command; normal terminal
 capture and supported hooks remain separate. MCP access, if added through a
 third-party adapter, would provide memory access rather than automatic capture.
 
-## Limitations
+### Limitations
 
 - There is no verified native Pi-to-`mw-mcp` configuration in this repository.
 - The CLI workflow requires copying or piping context into Pi.
 - Pi project extensions execute with broad local permissions; only install
   extensions you trust.
 - MemoryWhale does not silently synchronize the local database.
+
+## Example prompt
+
+> Use MemoryWhale to check whether I encountered a similar failure before.
 
 ## Troubleshooting
 
@@ -94,7 +98,7 @@ third-party adapter, would provide memory access rather than automatic capture.
 - Set `MEMORYWHALE_DATA_DIR` explicitly when selecting a non-default store.
 - Run `mw doctor` before debugging a missing or empty store.
 
-## Remove integration
+## Uninstall
 
 Remove any Pi-specific instruction or extension you added. This does not delete
 the MemoryWhale database; use the documented `mw rm` or retention commands for

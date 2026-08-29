@@ -19,14 +19,6 @@ The hook and skill are optional repository-provided components.
 - A local checkout of this repository to copy the skill (only for manual
   setup; `mw integrate claude` needs no checkout).
 
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory access | Yes |
-| Automatic execution capture | Yes, optional `PostToolUse` and `PostToolUseFailure` hooks for Bash calls |
-| Memory-use guidance | Yes, optional skill |
-
 ## Setup
 
 From any machine with MemoryWhale installed:
@@ -132,7 +124,13 @@ capture, ask Claude Code to run a unique successful command such as
 mw search "memorywhale-hook-check"
 ```
 
-## How to use
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | Yes |
+| Automatic execution capture | Yes, optional `PostToolUse` and `PostToolUseFailure` hooks for Bash calls |
+| Memory-use guidance | Yes, optional skill |
 
 The MCP server lets Claude read prior failures and explicitly save lessons. The
 skill prompts Claude to consult those tools when a failure may have happened
@@ -142,13 +140,7 @@ successful Bash commands Claude runs, even when no MCP tool is called.
 The skill falls back to `mw context`, `mw search`, and `mw remember` when the
 MCP server is not connected, so each component can be installed separately.
 
-## Example prompt
-
-> Use MemoryWhale to check whether I encountered a similar failure before.
-> Explain the relevant saved evidence before suggesting a fix, then remember
-> the root cause after it is verified.
-
-## Automatic capture
+### Automatic capture
 
 `mw-remember --from-hook claude` receives Claude Code's hook JSON on standard input.
 For each `Bash` call, it records the command, working directory, output, and
@@ -161,7 +153,7 @@ The hook is registered for both events so successful and failed Bash commands
 are captured. Commands run in an ordinary terminal are captured only through
 MemoryWhale's normal terminal capture paths.
 
-## Limitations
+### Limitations
 
 - The bundled hook captures only the Bash tool.
 - Each output stream is truncated to 20,000 characters by the hook.
@@ -169,6 +161,12 @@ MemoryWhale's normal terminal capture paths.
 - Guidance helps Claude choose when to use memory, but does not force a tool
   call on every failure.
 - Secret redaction reduces accidental retention but is not a security boundary.
+
+## Example prompt
+
+> Use MemoryWhale to check whether I encountered a similar failure before.
+> Explain the relevant saved evidence before suggesting a fix, then remember
+> the root cause after it is verified.
 
 ## Troubleshooting
 
@@ -186,7 +184,7 @@ MemoryWhale's normal terminal capture paths.
   own health. If `MEMORYWHALE_DATA_DIR` is set, ensure Claude Code and your
   shell use the same value. `CLAUDE_CONFIG_DIR` is honored.
 
-## Remove integration
+## Uninstall
 
 ```bash
 mw integrate claude --revert

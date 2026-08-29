@@ -50,15 +50,6 @@ them.
     settings.
 - CLIProxyAPI installed and running with at least one `api-keys` entry.
 
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory access | No — CLIProxyAPI is not an MCP client; compose through an agent |
-| Automatic execution capture | No — comes from the agent's hooks, not the proxy |
-| Memory-use guidance | No — configure guidance in the agent, not the proxy |
-| Model-provider consolidation | Yes — one local endpoint, multiple upstream accounts |
-
 ## Setup
 
 ### 1. Start CLIProxyAPI
@@ -78,7 +69,7 @@ api-keys:
 ### 2. Point the coding agent at CLIProxyAPI
 
 Configure the agent's model base URL to the local proxy and use a key from
-CLIProxyAPI's `api-keys`. Export that key once as `CLIPROXY_API_KEY` — it is
+CLIProxyAPI's `api-keys`. Export that key once as `CLIPROXY_API_KEY`. It is
 what the verification step below authenticates with, independent of protocol.
 If you already have provider base URLs or keys set, save their values (and
 whether each was set at all) first so they can be restored on removal:
@@ -117,7 +108,7 @@ the exact endpoint paths each protocol exposes.
 
 ### 3. Keep `mw-mcp` configured in the same agent
 
-This step is unchanged from the agent's normal MemoryWhale setup — the proxy
+This step is unchanged from the agent's normal MemoryWhale setup. The proxy
 does not replace it. For example, in Claude Code:
 
 ```bash
@@ -163,7 +154,16 @@ tools. If model calls fail but `mw doctor` passes, the problem is on the proxy
 side; if model calls work but memory tools are missing, re-check the agent's
 MCP configuration.
 
-## How to use
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | No, CLIProxyAPI is not an MCP client; compose through an agent |
+| Automatic execution capture | No, comes from the agent's hooks, not the proxy |
+| Memory-use guidance | No, configure guidance in the agent, not the proxy |
+| Model-provider consolidation | Yes, one local endpoint, multiple upstream accounts |
+
+### How to use
 
 Use this stack when you want:
 
@@ -172,22 +172,15 @@ Use this stack when you want:
 - your existing agent's MemoryWhale memory to keep working unchanged.
 
 Use plain provider keys instead when you have only one account and no routing
-needs — a proxy in the middle adds a hop without benefit.
+needs. A proxy in the middle adds a hop without benefit.
 
-## Example prompt
-
-No prompt changes are needed; memory behavior lives in the agent's
-configuration, not the proxy. A normal memory-aware prompt still works:
-
-> Use MemoryWhale to check whether I encountered a similar failure before.
-
-## Automatic capture
+### Automatic capture
 
 Automatic capture is unchanged and comes from the agent's hooks (for example,
 Claude Code's `PostToolUse` hook), not from CLIProxyAPI. The proxy only sees
 model requests and cannot record terminal commands or sessions.
 
-## Limitations
+### Limitations
 
 - CLIProxyAPI does not provide MCP memory access. Any guide or matrix claim of
   direct `mw-mcp` ↔ CLIProxyAPI connectivity would be false.
@@ -200,6 +193,13 @@ model requests and cannot record terminal commands or sessions.
 - If you bind CLIProxyAPI beyond loopback, its endpoints are only as safe as
   the `api-keys` you configure. Keep `host` on loopback unless you need LAN
   access, and treat keys in `config.yaml` as secrets.
+
+## Example prompt
+
+No prompt changes are needed; memory behavior lives in the agent's
+configuration, not the proxy. A normal memory-aware prompt still works:
+
+> Use MemoryWhale to check whether I encountered a similar failure before.
 
 ## Troubleshooting
 
@@ -214,10 +214,10 @@ model requests and cannot record terminal commands or sessions.
   authenticated accounts; see its routing docs (`round-robin`,
   `fill-first`, session affinity) rather than MemoryWhale's.
 
-## Remove integration
+## Uninstall
 
 Stop CLIProxyAPI, then undo **both** the base-URL and key overrides you set in
-step 2 — leaving `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` pointing at the proxy key
+step 2. Leaving `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` pointing at the proxy key
 breaks direct provider authentication. Remove the overrides first, then
 restore only what was actually set before:
 
@@ -248,8 +248,8 @@ fi
 Run setup and removal in the same shell (or persist the `OLD_*` values
 securely) so the restore state is available. If you persisted the proxy URL in
 the agent's own configuration (Codex's `config.toml`, OpenCode's
-`opencode.json`, Continue's `config.yaml`), remove or restore that entry too —
-otherwise model calls keep targeting `127.0.0.1:8317` after the proxy stops.
+`opencode.json`, Continue's `config.yaml`), remove or restore that entry too.
+Otherwise model calls keep targeting `127.0.0.1:8317` after the proxy stops.
 Direct-provider fallback then works when direct provider access is already
 configured. `mw-mcp` memory continues to work unchanged, and removing
 CLIProxyAPI never deletes MemoryWhale data.
