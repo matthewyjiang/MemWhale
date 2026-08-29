@@ -101,6 +101,23 @@ without inventing a shell command or exit code.
 
 ## Adding or updating an integration
 
-Use [`TEMPLATE.md`](TEMPLATE.md). Verify the current client configuration from
-an authoritative source, declare capabilities from repository evidence, and
-keep client-specific behavior out of MemoryWhale core.
+Every guide under this directory follows the same eight headings, in this
+order:
+
+1. Status
+2. Requirements
+3. Setup
+4. Verify
+5. Available capabilities
+6. Example prompt
+7. Troubleshooting
+8. Uninstall
+
+Copy [`TEMPLATE.md`](TEMPLATE.md). Keep those headings even when a section is
+not applicable. Put client-specific detail in subsections, not extra required
+top-level headings. Verify the current client configuration from an
+authoritative source, declare capabilities from repository evidence, and keep
+client-specific behavior out of MemoryWhale core.
+
+The GitHub [integration request](../.github/ISSUE_TEMPLATE/integration_request.md)
+template points at the same standard.

@@ -2,8 +2,8 @@
 
 [CodeWhale](https://github.com/Hmbown/CodeWhale) is an open-source terminal
 coding agent written in Rust: TUI, headless `codewhale exec`, and a local web
-client, with per-role model fleets. It is an MCP host — local stdio MCP servers
-configured in its MCP file become tools the agent can call — so `mw-mcp` plugs
+client, with per-role model fleets. It is an MCP host. Local stdio MCP servers
+configured in its MCP file become tools the agent can call, so `mw-mcp` plugs
 in directly.
 
 ## Status
@@ -19,14 +19,6 @@ active development; check that file if a field or command changes.
   `docs/INSTALL.md`).
 - A model that supports tool calling (CodeWhale supports 30+ providers and
   local servers; tool calling is a model capability).
-
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory access | Yes |
-| Automatic execution capture | No |
-| Memory-use guidance | Via roles / constitution standing instructions |
 
 ## Setup
 
@@ -96,7 +88,7 @@ codewhale-tui mcp tools memorywhale
 `mcp list` should show `memorywhale`; `mcp tools memorywhale` should discover
 the six MemoryWhale tools. After editing the MCP file, run `/mcp reload` in the
 TUI (no restart needed). Headless `codewhale exec` surfaces do **not** hot
-reload — restart the process after config changes.
+reload. Restart the process after config changes.
 
 CodeWhale exposes MCP tools to the model under a server-name prefix
 (`mcp_<server>_<tool>`), so the tools appear as `mcp_memorywhale_search_memory`
@@ -115,27 +107,35 @@ The six tools:
 - `similar_failures`
 - `stats`
 
-An empty store is valid — the tools return empty results, not errors.
+An empty store is valid. The tools return empty results, not errors.
 
-## How to use
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | Yes |
+| Automatic execution capture | No |
+| Memory-use guidance | Via roles / constitution standing instructions |
+
+### How to use
 
 Use retrieval when a build, test, or deployment failure may have happened
 before. Once the cause or fix is confirmed, use `remember` to save the lesson
 so future CodeWhale sessions (or any other agent sharing the store) can find
 it. CodeWhale roles and the constitution carry standing instructions, so a
 role can be told to consult MemoryWhale before debugging and to record
-verified fixes — see CodeWhale's `docs/FLEET.md` and `docs/CONFIGURATION.md`.
+verified fixes. See CodeWhale's `docs/FLEET.md` and `docs/CONFIGURATION.md`.
 
-## Automatic capture
+### Automatic capture
 
 MCP access is not automatic execution capture. Commands CodeWhale runs are
-recorded by MemoryWhale only through the normal capture paths — `mw-run --`,
+recorded by MemoryWhale only through the normal capture paths: `mw-run --`,
 `mw-remember`, `mw --notes "project:…"` session recording, or an installed
 shell hook. CodeWhale has its own lifecycle hooks (`docs/HOOKS.md`), but none
 is verified to write into MemoryWhale; do not assume capture without one of
 the paths above.
 
-## Limitations
+### Limitations
 
 - The model must support tool calling; not every local model does.
 - MCP tools consume context; CodeWhale's docs recommend enabling only the
@@ -143,7 +143,7 @@ the paths above.
 - Secret redaction on capture reduces accidental retention but is not a
   security boundary.
 
-## Security
+### Security
 
 `mw-mcp` is read-mostly: of its six tools, `remember` is the only one that
 writes, and it saves a single note. The other five only read. Review the
@@ -152,6 +152,12 @@ before connecting a store that contains sensitive output. Note that these MCP
 tool permissions are separate from process-level filesystem permissions: the
 OS user that spawns `mw-mcp` remains the file-level trust boundary.
 `MEMORYWHALE_DATA_DIR` selects a store; it is not an access-control mechanism.
+
+## Example prompt
+
+> Use MemoryWhale to check whether I have encountered a similar build failure
+> before. Search for `openssl` and explain which saved evidence is relevant
+> before suggesting a fix.
 
 ## Troubleshooting
 
@@ -164,11 +170,11 @@ OS user that spawns `mw-mcp` remains the file-level trust boundary.
   `mcp_config_path` / `DEEPSEEK_MCP_CONFIG` override).
 - Run `mw doctor` to verify the MemoryWhale data directory and database.
 
-## Remove integration
+## Uninstall
 
 Remove the `"memorywhale"` entry from `~/.codewhale/mcp.json` (or run
 `codewhale-tui mcp remove memorywhale`, or `/mcp remove memorywhale` in the
 TUI), then run `/mcp reload` in each TUI session. Running headless
-`codewhale exec` processes do not hot-reload MCP configuration — restart them
+`codewhale exec` processes do not hot-reload MCP configuration. Restart them
 after removing the entry. This does not delete the MemoryWhale database; use
 `mw rm` or the documented retention commands for data lifecycle.

@@ -19,14 +19,6 @@ versions; check those pages if a field is rejected.
 - A model that supports tool calling (MCP tools are ordinary tools from the
   model's perspective).
 
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory access | Yes |
-| Automatic execution capture | No |
-| Memory-use guidance | Example prompt (OpenCode rules can carry standing instructions) |
-
 ## Setup
 
 OpenCode reads a merged JSON config from `~/.config/opencode/opencode.json`
@@ -50,7 +42,7 @@ Add MemoryWhale as a local stdio server:
 
 Notes, from OpenCode's documented local-server options:
 
-- `command` is an **array** — the command and its arguments as one list. If
+- `command` is an **array**, the command and its arguments as one list. If
   `mw-mcp` is not on the `PATH` OpenCode sees, use its absolute path:
   `"command": ["/usr/local/bin/mw-mcp"]`.
 - To use a non-default MemoryWhale store, set the environment under
@@ -72,7 +64,7 @@ Notes, from OpenCode's documented local-server options:
 
 - `"enabled": false` disables a server without removing it.
 - If other MCP servers are already configured, add the `"memorywhale"` key
-  alongside them — do not replace the existing entries.
+  alongside them. Do not replace the existing entries.
 
 ## Verify
 
@@ -101,26 +93,34 @@ MemoryWhale tools appear as:
 - `similar_failures`
 - `stats`
 
-An empty store is valid — the tools return empty results, not errors. `stats`
+An empty store is valid. The tools return empty results, not errors. `stats`
 on a fresh store reports zero records.
 
-## OpenCode Go
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | Yes |
+| Automatic execution capture | No |
+| Memory-use guidance | Example prompt (OpenCode rules can carry standing instructions) |
+
+### OpenCode Go
 
 OpenCode Go is a low-cost model subscription inside OpenCode, not a separate
 client. It changes which models are available; it does not change MCP
 configuration. The setup above works the same whether the selected model comes
 from OpenCode Go (GLM, Kimi, DeepSeek, …), any other provider, or a local
-server — as long as the model supports tool calling.
+server, as long as the model supports tool calling.
 
-## Automatic capture
+### Automatic capture
 
 MCP access is not automatic execution capture. Commands OpenCode runs are
-recorded by MemoryWhale only through the normal capture paths — `mw-run --`,
+recorded by MemoryWhale only through the normal capture paths: `mw-run --`,
 `mw-remember`, `mw --notes "project:…"` session recording, or an installed
 shell hook. MCP lets the agent read memory and save lessons via `remember`
 when asked.
 
-## Limitations
+### Limitations
 
 - MCP tools consume model context; OpenCode's docs warn that many servers can
   exhaust the context window. MemoryWhale's six tools are small, but avoid
@@ -129,13 +129,19 @@ when asked.
 - Secret redaction on capture reduces accidental retention but is not a
   security boundary.
 
-## Security
+### Security
 
 `mw-mcp` is a local stdio process with full read/write access to the connected
 MemoryWhale database. Review the canonical
 [local stdio trust model](../../docs/reference/mcp.md#trust-model) before
 connecting a store that contains sensitive output. `MEMORYWHALE_DATA_DIR`
 selects a store; it is not an access-control mechanism.
+
+## Example prompt
+
+> Use MemoryWhale to check whether I have encountered a similar build failure
+> before. Search for `openssl` and explain which saved evidence is relevant
+> before suggesting a fix.
 
 ## Troubleshooting
 
@@ -147,7 +153,7 @@ selects a store; it is not an access-control mechanism.
   or comment in strict tooling can break parsing.
 - Run `mw doctor` to verify the MemoryWhale data directory and database.
 
-## Remove integration
+## Uninstall
 
 Delete the `"memorywhale"` entry from `"mcp"` in `opencode.json` (global or
 project) and restart OpenCode. This does not delete the MemoryWhale database;

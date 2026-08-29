@@ -3,10 +3,10 @@
 [OpenRouter](https://openrouter.ai) is a hosted API gateway that exposes
 hundreds of models from many providers behind a single OpenAI-compatible API
 and one key. `stealth/ox-alpha` is one such model slug. OpenAI-compatible
-clients can select any catalog model directly; Claude Code is the exception —
+clients can select any catalog model directly; Claude Code is the exception.
 OpenRouter guarantees it only with Anthropic's first-party providers, so other
 models there are best-effort. (Some clients qualify slugs with a provider
-prefix — for example OpenCode's `openrouter/stealth/ox-alpha` — but the API
+prefix, for example OpenCode's `openrouter/stealth/ox-alpha`, but the API
 model id itself is `stealth/ox-alpha`.)
 
 OpenRouter is a **model gateway**, not an MCP client for MemoryWhale. It does
@@ -32,8 +32,8 @@ Verified against OpenRouter's public documentation in August 2026:
   its own (model catalog, documentation search, test inference), but it
   provides no access to MemoryWhale.
 
-Model availability, pricing, and context limits for any slug — including
-`stealth/ox-alpha` — belong to the model's page on openrouter.ai and change
+Model availability, pricing, and context limits for any slug, including
+`stealth/ox-alpha`, belong to the model's page on openrouter.ai and change
 independently of MemoryWhale.
 
 ## Requirements
@@ -46,15 +46,6 @@ independently of MemoryWhale.
   base URL or the Anthropic environment variables shown below;
 - `jq` for the verification step below (not installed by default on macOS;
   `brew install jq`).
-
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory access | No — OpenRouter is not an MCP client for `mw-mcp`; compose through an agent |
-| Automatic execution capture | No — comes from the agent's hooks, not the gateway |
-| Memory-use guidance | No — configure guidance in the agent, not the gateway |
-| Multi-provider model access | Yes — one key, many models |
 
 ## Setup
 
@@ -81,19 +72,19 @@ best-effort basis through this endpoint.
 
 **OpenAI-compatible agents** (Continue, OpenCode, Codex CLI, …): set the base
 URL to `https://openrouter.ai/api/v1`, use the key as the API key, and select
-the model by its OpenRouter slug — for example `stealth/ox-alpha`. In clients
+the model by its OpenRouter slug, for example `stealth/ox-alpha`. In clients
 whose provider syntax requires a prefix, qualify it (OpenCode:
 `openrouter/stealth/ox-alpha`). The exact setting name depends on the agent
 (Continue uses `apiBase` on the model entry; OpenCode uses
 `provider.<id>.options.baseURL`; Codex CLI defines a custom provider in
-`~/.codex/config.toml` — a `[model_providers.openrouter]` block with
-`base_url = "https://openrouter.ai/api/v1"` and an `env_key` — selected via
+`~/.codex/config.toml`: a `[model_providers.openrouter]` block with
+`base_url = "https://openrouter.ai/api/v1"` and an `env_key`, selected via
 `model_provider` and `model`. Omit `wire_api`: current Codex CLI defaults to
 the Responses protocol, which is what OpenRouter's Codex endpoint speaks.)
 
 ### 3. Keep `mw-mcp` configured in the same agent
 
-This step is unchanged from the agent's normal MemoryWhale setup — the gateway
+This step is unchanged from the agent's normal MemoryWhale setup. The gateway
 does not replace it. For example, in Claude Code:
 
 ```bash
@@ -130,7 +121,16 @@ If model calls fail but the MemoryWhale checks pass, the problem is on the
 OpenRouter side (key, credits, or model slug). If model calls work but memory
 tools are missing in the agent, re-check its MCP configuration.
 
-## How to use
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | No, OpenRouter is not an MCP client for `mw-mcp`; compose through an agent |
+| Automatic execution capture | No, comes from the agent's hooks, not the gateway |
+| Memory-use guidance | No, configure guidance in the agent, not the gateway |
+| Multi-provider model access | Yes, one key, many models |
+
+### How to use
 
 Use this stack when you want:
 
@@ -139,23 +139,16 @@ Use this stack when you want:
   accounts;
 - your existing agent's MemoryWhale memory to keep working unchanged.
 
-Use direct provider keys instead when you only need one provider — the gateway
+Use direct provider keys instead when you only need one provider. The gateway
 adds a hop and a data processor without benefit in that case.
 
-## Example prompt
-
-No prompt changes are needed; memory behavior lives in the agent's
-configuration, not the gateway. A normal memory-aware prompt still works:
-
-> Use MemoryWhale to check whether I encountered a similar failure before.
-
-## Automatic capture
+### Automatic capture
 
 Automatic capture comes from the agent's hooks (for example, Claude Code's
 `PostToolUse` hook), not from OpenRouter. The gateway only sees model requests
 and cannot record terminal commands or sessions.
 
-## Limitations
+### Limitations
 
 - OpenRouter does not provide MCP memory access. Its own MCP server serves
   OpenRouter's catalog and documentation; claims of direct
@@ -171,6 +164,13 @@ and cannot record terminal commands or sessions.
 - Routing quality (tool use, long context) varies by upstream provider for the
   same slug; OpenRouter's own docs recommend pinning providers where tool-use
   reliability matters.
+
+## Example prompt
+
+No prompt changes are needed; memory behavior lives in the agent's
+configuration, not the gateway. A normal memory-aware prompt still works:
+
+> Use MemoryWhale to check whether I encountered a similar failure before.
 
 ## Troubleshooting
 
@@ -188,7 +188,7 @@ and cannot record terminal commands or sessions.
 - **Memory tools missing:** an agent MCP configuration issue, not a gateway
   issue. Run `mw doctor` and re-check the agent's `mw-mcp` registration.
 
-## Remove integration
+## Uninstall
 
 Stop exporting the OpenRouter variables (and remove any persisted provider
 entries you added in the agent's config, restoring the direct-provider

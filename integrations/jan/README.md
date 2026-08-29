@@ -19,14 +19,6 @@ desktop UI details may change.
 - Optional: a deliberate `MEMORYWHALE_DATA_DIR` value if Jan should use a
   non-default store.
 
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory access | Yes |
-| Automatic execution capture | No |
-| Memory-use guidance | No built-in Jan-specific guidance; use the example prompt below |
-
 ## Setup
 
 1. Confirm that the server works in the same environment Jan will use:
@@ -78,13 +70,21 @@ If Jan shows the server but does not call tools, select a model with tool-callin
 support and check Jan's MCP permissions. An empty MemoryWhale store is valid;
 `stats` should report zero records rather than a connection failure.
 
-## How to use
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | Yes |
+| Automatic execution capture | No |
+| Memory-use guidance | No built-in Jan-specific guidance; use the example prompt below |
+
+### How to use
 
 Use retrieval when a build, test, or deployment failure may have happened
 before. Once the cause or fix is confirmed, use `remember` to save the lesson so
 future sessions can find it.
 
-## Automatic capture
+### Automatic capture
 
 Jan's MCP connection does not automatically record Jan prompts, responses, or
 shell commands. MCP provides access to MemoryWhale's local memory and an
@@ -95,7 +95,7 @@ capture or an explicit wrapper such as:
 mw-run -- cargo test
 ```
 
-## Security and limitations
+### Security and limitations
 
 - `mw-mcp` is a local stdio process. Jan and the selected model can access the
   MemoryWhale store through its tools, so only connect stores you intend Jan to
@@ -108,6 +108,11 @@ mw-run -- cargo test
 - Read the canonical [local stdio trust model](../../docs/reference/mcp.md#trust-model)
   before connecting a sensitive store.
 
+## Example prompt
+
+> Use MemoryWhale to check whether I have seen this failure before. Search for
+> `openssl` and explain which saved evidence is relevant before suggesting a fix.
+
 ## Troubleshooting
 
 - Run `command -v mw-mcp` from the environment used to launch Jan.
@@ -118,7 +123,7 @@ mw-run -- cargo test
 - Run `mw doctor` and the direct JSON-RPC discovery command above.
 - Check that the model has tool calling enabled in Jan's model capabilities.
 
-## Remove integration
+## Uninstall
 
 Remove the `memorywhale` entry from **Settings → MCP Servers** and restart Jan.
 Removing the entry does not delete the MemoryWhale database or its captured

@@ -1,19 +1,45 @@
 # <Client> + MemoryWhale
 
-Use this structure for every client integration. Remove placeholder text, but
-keep each heading; write “Not applicable” when the client does not support a
-capability.
+Use this structure for every client integration. Keep these eight headings,
+in this order. Remove placeholder text. Write "Not applicable" plus a one-line
+reason when the client does not support a section.
+
+Client-specific details belong under these headings as subsections. Do not
+add extra required top-level headings. Do not copy setup from another guide;
+verify commands and paths against the client's current documentation.
+
+Authoring checklist. Check these items, then leave them out of the published
+README so a copy of this file still has exactly eight headings.
+
+- [ ] Headings match this template, in this order.
+- [ ] Setup and Verify were checked against current client docs, not another
+      MemoryWhale guide.
+- [ ] Capabilities match repository evidence.
+- [ ] Automatic capture is claimed only when a verified hook or equivalent
+      exists.
+- [ ] Uninstall does not delete the MemoryWhale database.
+- [ ] The client is listed in [README.md](README.md).
 
 ## Status
 
-State whether the configuration is verified and against which client version or
-documentation date.
+State whether the configuration is verified and against which client version
+or documentation date. Link the authoritative pages you used.
 
 ## Requirements
 
 List MemoryWhale, client, PATH, platform, and feature requirements.
 
-## Capabilities
+## Setup
+
+Show the exact configuration path and the minimal configuration. Link the
+authoritative client documentation used to verify it.
+
+## Verify
+
+Give a deterministic transport or tool-discovery check, plus any client UI
+or CLI command that proves the server is connected.
+
+## Available capabilities
 
 | Capability | Available |
 | --- | --- |
@@ -21,36 +47,21 @@ List MemoryWhale, client, PATH, platform, and feature requirements.
 | Automatic execution capture | Yes / No / Unverified |
 | Memory-use guidance | Yes / No / Unverified |
 
-## Setup
-
-Show the exact configuration path and minimal configuration. Link the
-authoritative client documentation used to verify it.
-
-## Verify
-
-Give a deterministic transport or tool-discovery check.
-
-## How to use
-
-Explain when a person or client should use the integration.
+Declare only what this repository demonstrates. MCP access is not automatic
+execution capture. List the MemoryWhale tools the client actually exposes, or
+state that tool discovery was not verified.
 
 ## Example prompt
 
 > Use MemoryWhale to check whether I encountered a similar failure before.
 
-## Automatic capture
-
-State exactly what is and is not captured. MCP access alone is not automatic
-capture.
-
-## Limitations
-
-List client-specific gaps without inferring unsupported behavior.
+Replace this with a client-specific prompt when the client needs different
+wording. If the client is not an agent, write “Not applicable” and say why.
 
 ## Troubleshooting
 
 Cover PATH, restart, configuration location, and data-directory issues.
 
-## Remove integration
+## Uninstall
 
 Explain how to remove client configuration without deleting MemoryWhale data.

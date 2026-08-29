@@ -1,10 +1,16 @@
-# Hermes Agent integration
+# Hermes Agent + MemoryWhale
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) can run local
 stdio MCP servers. Hermes remains the agent runtime; `mw-mcp` contributes
 MemoryWhale's persistent developer-memory tools.
 
-## Prerequisites
+## Status
+
+Hermes Agent can run local stdio MCP servers. MemoryWhale connects as `mw-mcp`.
+Hermes MCP configuration details are maintained in the
+[official Hermes documentation](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/mcp.md).
+
+## Requirements
 
 Install both `hermes` and MemoryWhale, then confirm the MCP binary is on
 `PATH`:
@@ -17,7 +23,7 @@ command -v mw-mcp
 If `mw-mcp` is not on `PATH`, use its absolute path in the command below or in
 the configuration file.
 
-## Connect MemoryWhale
+## Setup
 
 The MemoryWhale CLI can update Hermes' configuration safely while preserving
 existing settings and MCP servers:
@@ -73,7 +79,7 @@ without being told the internal name. The six MemoryWhale tools are:
 - `similar_failures`
 - `stats`
 
-## Verify the integration
+## Verify
 
 Ask Hermes:
 
@@ -87,7 +93,18 @@ directly with the current protocol revision:
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' | mw-mcp
 ```
 
-## Using Kimi K3 through Hermes
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | Yes |
+| Automatic execution capture | No |
+| Memory-use guidance | Example prompt |
+
+MCP access is not automatic capture. The six tools above read and write the
+local MemoryWhale store when Hermes calls them.
+
+### Using Kimi K3 through Hermes
 
 Kimi K3 is a model, not an MCP client. If the Hermes model provider you use
 offers Kimi K3, select it through Hermes' model configuration and keep the
@@ -117,6 +134,11 @@ The exact Kimi model identifier and credentials depend on the provider. Do not
 configure the model process itself to launch `mw-mcp`; Hermes owns that
 connection.
 
+## Example prompt
+
+> Use MemoryWhale to check whether I have encountered a similar build failure
+> before.
+
 ## Troubleshooting
 
 - If no tools appear, restart Hermes after adding the server and confirm
@@ -130,3 +152,10 @@ connection.
 
 Hermes MCP configuration details are maintained in the
 [official Hermes documentation](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/mcp.md).
+
+## Uninstall
+
+Delete the `memorywhale` entry from `~/.hermes/config.yaml` (or `$HERMES_HOME`)
+and restart Hermes. If `mcp_servers` has other servers, remove only
+`memorywhale`. This does not delete MemoryWhale's database or any captured
+records.

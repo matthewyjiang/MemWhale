@@ -121,7 +121,9 @@ cargo run -p memorywhale-cli --bin mw-remember -- --help
 
 6. Keep integrations thin.
    Integrations configure an external client at the `mw-mcp` or CLI seam. Use
-   [integrations/TEMPLATE.md](integrations/TEMPLATE.md), declare only verified
+   [integrations/TEMPLATE.md](integrations/TEMPLATE.md) so every guide has
+   Status, Requirements, Setup, Verify, Available capabilities, Example
+   prompt, Troubleshooting, and Uninstall. Declare only verified
    capabilities, and do not describe MCP access as automatic execution capture.
 
 ## Pull Request Checklist
@@ -135,3 +137,4 @@ cargo run -p memorywhale-cli --bin mw-remember -- --help
 - `cargo test -p memorywhale-core -p memorywhale-cli` passes when Rust code changes.
 - `cargo build --workspace` passes for workspace changes.
 - Documentation is updated for user-facing behavior.
+- New or updated client guides follow [integrations/TEMPLATE.md](integrations/TEMPLATE.md).

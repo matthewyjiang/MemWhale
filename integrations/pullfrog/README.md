@@ -33,15 +33,6 @@ Official references:
 - A ChatGPT/Codex subscription or another provider configured in Pullfrog.
 - A deliberate review-only policy if Pullfrog must not push commits.
 
-## Capabilities
-
-| Capability | Available |
-| --- | --- |
-| MCP memory access | No — external `mw-mcp` attachment is not documented or verified |
-| Automatic execution capture | No |
-| Memory-use guidance | No verified MemoryWhale-specific guidance |
-| PR review automation | Yes, when enabled in the Pullfrog console |
-
 ## Setup
 
 ### 1. Install the GitHub App
@@ -163,7 +154,16 @@ For review automation, open a test PR and verify in GitHub that Pullfrog adds a
 review or a Pullfrog status/check. A manual `@pullfrog` comment is a separate
 interactive trigger and does not prove that automatic review-on-PR is enabled.
 
-## How to use
+## Available capabilities
+
+| Capability | Available |
+| --- | --- |
+| MCP memory access | No, external `mw-mcp` attachment is not documented or verified |
+| Automatic execution capture | No |
+| Memory-use guidance | No verified MemoryWhale-specific guidance |
+| PR review automation | Yes, when enabled in the Pullfrog console |
+
+### How to use
 
 Use Pullfrog for GitHub-native work:
 
@@ -181,17 +181,7 @@ mw search "linker error"
 mw remember "the linker failed because ..."
 ```
 
-## Example prompt
-
-For a review-only Pullfrog run, configure review instructions such as:
-
-> Review this pull request for correctness, security, data-integrity, and test
-> coverage. Comment with actionable findings only. Do not modify files, push
-> commits, open branches, or implement fixes.
-
-This prompt does not grant Pullfrog access to MemoryWhale's local database.
-
-## Pullfrog event archive
+### Pullfrog event archive
 
 The repository also contains `.github/workflows/pullfrog-memory.yml`. After a
 workflow named `Pullfrog` completes, it records an allowlisted metadata summary
@@ -231,7 +221,7 @@ the developer's local SQLite database, and each artifact has a 14-day retention
 period. Review GitHub artifact access and retention policies before treating the
 archive as long-term history.
 
-## Automatic capture
+### Automatic capture
 
 Pullfrog does not automatically capture local MemoryWhale terminal sessions.
 Its GitHub Actions runs can inspect the repository, pull requests, and CI
@@ -239,7 +229,7 @@ through Pullfrog's built-in tools, but those tools are not the six MemoryWhale
 MCP tools and do not provide access to the developer's local
 `memorywhale.sqlite3`.
 
-## MemoryWhale MCP integration status
+### MemoryWhale MCP integration status
 
 Pullfrog's public tools documentation describes its built-in GitHub and CI MCP
 tools. It does not document a configuration field for arbitrary external MCP
@@ -253,7 +243,7 @@ Do not add an invented `mcpServers`, `MCP_SERVERS`, or similar setting to a
 Pullfrog workflow. A future supported custom-MCP feature could make this a thin
 integration; update this guide only after verifying the official configuration.
 
-## Limitations and privacy
+### Limitations and privacy
 
 - Pullfrog runs through GitHub and the selected model provider. Code, diffs,
   issue text, and review context may leave the local machine according to
@@ -267,6 +257,16 @@ integration; update this guide only after verifying the official configuration.
 - Review-only configuration is a policy setting, not a technical guarantee
   against every possible workflow or manually triggered action; keep workflow
   permissions least-privilege.
+
+## Example prompt
+
+For a review-only Pullfrog run, configure review instructions such as:
+
+> Review this pull request for correctness, security, data-integrity, and test
+> coverage. Comment with actionable findings only. Do not modify files, push
+> commits, open branches, or implement fixes.
+
+This prompt does not grant Pullfrog access to MemoryWhale's local database.
 
 ## Troubleshooting
 
@@ -283,7 +283,7 @@ integration; update this guide only after verifying the official configuration.
 - Pullfrog review status and MemoryWhale MCP status are independent; a healthy
   Pullfrog review does not prove `mw-mcp` is connected.
 
-## Remove integration
+## Uninstall
 
 Disable review automations in the Pullfrog console, then uninstall the Pullfrog
 GitHub App or remove `wuisabel-gif/MemWhale` from its repository access list.
