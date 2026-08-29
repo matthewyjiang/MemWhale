@@ -81,7 +81,9 @@ MCP access is not automatic execution capture. Without the MCP server, the
 
 - Run `command -v mw-mcp` from the environment that launches Gemini CLI.
 - Confirm `mcpServers` is valid JSON and restart the CLI.
-- If `/mcp list` shows Disconnected, the binary is missing from `PATH`.
+- If `/mcp list` shows Disconnected, run `gemini mcp list` and read the
+  reported error. Check `PATH`, the `command` and `args` in settings, and
+  whether `mw-mcp` starts on its own. A missing binary is only one cause.
 - If the wrong database opens, set `MEMORYWHALE_DATA_DIR` in `env`.
 - Run `mw doctor` to check the MemoryWhale install.
 

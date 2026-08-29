@@ -54,7 +54,7 @@ split; `:MwRemember` runs inline and notifies the result.
 | Automatic execution capture | No |
 | Memory-use guidance | Commands only |
 
-```
+```text
 :MwAsk [question]      package the last failure (exact error + similar past
                        failures + saved lessons) into a debugging prompt.
                        Clipboard filled, chatgpt.com opened; you paste.

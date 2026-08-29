@@ -18,8 +18,9 @@ entries in the settings file. Local servers use `command`, `args`, and `env`.
 ## Setup
 
 Open Settings → AI → MCP Servers and choose Add Server → Add Local
-Server, or run `agent: open settings` and open the JSON settings file. Merge
-the [`settings.json`](settings.json) example into your existing settings:
+Server, or run `agent: open settings` to stay in that UI. To edit the JSON
+settings file, run `zed: open settings file` and merge the
+[`settings.json`](settings.json) example into your existing settings:
 
 ```json
 {

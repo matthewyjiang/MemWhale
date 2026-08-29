@@ -8,6 +8,18 @@ Client-specific details belong under these headings as subsections. Do not
 add extra required top-level headings. Do not copy setup from another guide;
 verify commands and paths against the client's current documentation.
 
+Authoring checklist. Check these items, then leave them out of the published
+README so a copy of this file still has exactly eight headings.
+
+- [ ] Headings match this template, in this order.
+- [ ] Setup and Verify were checked against current client docs, not another
+      MemoryWhale guide.
+- [ ] Capabilities match repository evidence.
+- [ ] Automatic capture is claimed only when a verified hook or equivalent
+      exists.
+- [ ] Uninstall does not delete the MemoryWhale database.
+- [ ] The client is listed in [README.md](README.md).
+
 ## Status
 
 State whether the configuration is verified and against which client version
@@ -53,14 +65,3 @@ Cover PATH, restart, configuration location, and data-directory issues.
 ## Uninstall
 
 Explain how to remove client configuration without deleting MemoryWhale data.
-
-## Contribution checklist
-
-- [ ] Headings match this template, in this order.
-- [ ] Setup and Verify were checked against current client docs, not another
-      MemoryWhale guide.
-- [ ] Capabilities match repository evidence.
-- [ ] Automatic capture is claimed only when a verified hook or equivalent
-      exists.
-- [ ] Uninstall does not delete the MemoryWhale database.
-- [ ] The client is listed in [README.md](README.md).

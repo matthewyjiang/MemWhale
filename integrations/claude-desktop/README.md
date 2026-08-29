@@ -53,6 +53,9 @@ appear under the tools menu in the composer.
 command -v mw-mcp
 ```
 
+On Windows PowerShell use `Get-Command mw-mcp`; in Command Prompt use
+`where.exe mw-mcp`.
+
 Quit and reopen Claude Desktop, then confirm `memorywhale` appears in the tools
 menu with the six MemoryWhale tools. If the server is missing, the config file
 was not found or was invalid JSON.

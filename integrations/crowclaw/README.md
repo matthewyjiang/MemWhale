@@ -64,7 +64,7 @@ command -v mw-mcp
 
 Then confirm tools were discovered:
 
-```
+```http
 GET /api/mcp/servers/memorywhale/tools
 ```
 

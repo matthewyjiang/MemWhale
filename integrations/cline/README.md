@@ -9,9 +9,11 @@ Verified against Cline's
 [MCP overview](https://docs.cline.bot/mcp/mcp-overview) and
 [configuring MCP servers](https://docs.cline.bot/mcp/configuring-mcp-servers)
 documentation on 2026-08-29. The IDE opens MCP settings from the Cline panel
-(MCP Servers → Configure MCP Servers). CLI config is documented at
-`~/.cline/data/settings/cline_mcp_settings.json`. Local servers use `command`
-under a `mcpServers` object.
+(MCP Servers → Configure MCP Servers); that file lives under the editor's
+globalStorage, not under `~/.cline/`. CLI config is
+`~/.cline/data/settings/cline_mcp_settings.json`. Cline's MCP page still lists
+`~/.cline/mcp.json`; the CLI does not read that file. Local servers use
+`command` under a `mcpServers` object.
 
 ## Requirements
 
@@ -43,7 +45,7 @@ file this install actually uses.
 Typical VS Code global-storage locations, if you need to find the file by
 hand:
 
-```
+```text
 ~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json   # macOS
 ~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json                       # Linux
 %APPDATA%\Code\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json                        # Windows
@@ -76,6 +78,9 @@ Add to a `.clinerules` file (or Cline's custom instructions):
 command -v mw-mcp
 ```
 
+On Windows PowerShell use `Get-Command mw-mcp`; in Command Prompt use
+`where.exe mw-mcp`.
+
 In the Cline MCP panel, confirm `memorywhale` is enabled and lists the six
 tools: `recent_errors`, `search_memory`, `get_context`, `remember`,
 `similar_failures`, and `stats`. From the CLI, `cline mcp` can list servers.
@@ -98,7 +103,8 @@ MCP access is not automatic execution capture. Without the MCP server, the
 
 ## Troubleshooting
 
-- Run `command -v mw-mcp` from the environment that launches Cline.
+- Confirm `mw-mcp` is on `PATH` from the environment that launches Cline
+  (`command -v mw-mcp`, or `Get-Command` / `where.exe` on Windows).
 - Edit the file the Cline UI opened, not a guessed path.
 - Restart Cline after changing MCP settings if tools do not appear.
 - If the wrong database opens, set `MEMORYWHALE_DATA_DIR` in `env`.
