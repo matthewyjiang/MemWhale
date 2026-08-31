@@ -2051,7 +2051,7 @@ fn import_sqlite(src: &std::path::Path) -> Result<(), String> {
         let c = src_columns(&conn, "command_runs");
         if c.contains("command") && c.contains("argv_json") && c.contains("created_at") {
             let sql = format!(
-                "SELECT {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} FROM src.command_runs s",
+                "SELECT {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {} FROM src.command_runs s",
                 sel(&c, "command", "''"),
                 sel(&c, "argv_json", "'[]'"),
                 sel(&c, "cwd", "NULL"),
@@ -2060,6 +2060,7 @@ fn import_sqlite(src: &std::path::Path) -> Result<(), String> {
                 sel(&c, "stderr", "''"),
                 sel(&c, "notes", "''"),
                 sel(&c, "created_at", "''"),
+                sel(&c, "agent", "NULL"),
                 sel(&c, "repository_id", "NULL"),
                 sel(&c, "repository_name", "NULL"),
                 sel(&c, "worktree_root", "NULL")
@@ -2073,6 +2074,7 @@ fn import_sqlite(src: &std::path::Path) -> Result<(), String> {
                 String,
                 String,
                 String,
+                Option<String>,
                 Option<String>,
                 Option<String>,
                 Option<String>,
@@ -2094,6 +2096,7 @@ fn import_sqlite(src: &std::path::Path) -> Result<(), String> {
                         r.get(8)?,
                         r.get(9)?,
                         r.get(10)?,
+                        r.get(11)?,
                     ))
                 });
                 let rows = mapped
@@ -2111,6 +2114,7 @@ fn import_sqlite(src: &std::path::Path) -> Result<(), String> {
                 stderr,
                 notes,
                 created_at,
+                agent,
                 repository_id,
                 repository_name,
                 worktree_root,
@@ -2132,6 +2136,13 @@ fn import_sqlite(src: &std::path::Path) -> Result<(), String> {
                 let stdout = memorywhale_cli::sanitize_capture(&stdout);
                 let stderr = memorywhale_cli::sanitize_capture(&stderr);
                 let notes = memorywhale_cli::sanitize_capture(&notes);
+                // Imported provenance is untrusted data. Keep only identifiers
+                // produced by a verified hook boundary; never persist arbitrary
+                // source text (which could contain a token or forged identity).
+                let agent = agent
+                    .as_deref()
+                    .and_then(memorywhale_cli::agent_hook::Agent::parse)
+                    .map(|agent| agent.as_str().to_string());
                 let exists: i64 = conn
                     .query_row(
                         "SELECT COUNT(*) FROM command_runs WHERE command = ?1 AND argv_json = ?2 AND created_at = ?3",
@@ -2143,8 +2154,8 @@ fn import_sqlite(src: &std::path::Path) -> Result<(), String> {
                     conn.execute(
                         "INSERT INTO command_runs
                             (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at,
-                             repository_id, repository_name, worktree_root)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                             agent, repository_id, repository_name, worktree_root)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                         params![
                             command,
                             argv_json,
@@ -2154,12 +2165,23 @@ fn import_sqlite(src: &std::path::Path) -> Result<(), String> {
                             stderr,
                             notes,
                             created_at,
+                            agent.as_deref(),
                             repository_id,
                             repository_name,
                             worktree_root
                         ],
                     )
                     .map_err(|err| format!("failed to merge command run: {err}"))?;
+                } else if agent.is_some() {
+                    // A legacy duplicate may predate structured provenance.
+                    // Fill only NULL so a trusted existing attribution wins.
+                    conn.execute(
+                        "UPDATE command_runs SET agent = ?1
+                         WHERE command = ?2 AND argv_json = ?3 AND created_at = ?4
+                           AND agent IS NULL",
+                        params![agent.as_deref(), command, argv_json, created_at],
+                    )
+                    .map_err(|err| format!("failed to merge command provenance: {err}"))?;
                 }
             }
         }
@@ -4421,6 +4443,8 @@ mod tests {
     use std::io::Cursor;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    static IMPORT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn mcp_probe_accepts_discovery_and_tools_list() {
         let output = concat!(
@@ -4502,6 +4526,7 @@ mod tests {
     }
     #[test]
     fn import_redacts_split_secret_argv_and_survives_malformed_json() {
+        let _env_guard = IMPORT_ENV_LOCK.lock().unwrap();
         let previous_data_dir = env::var_os("MEMORYWHALE_DATA_DIR");
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -4613,5 +4638,103 @@ mod tests {
 
         drop(conn);
         // env + temp dirs are restored by the Cleanup guard on drop
+    }
+
+    #[test]
+    fn import_validates_agent_provenance_and_fills_legacy_duplicate() {
+        let _env_guard = IMPORT_ENV_LOCK.lock().unwrap();
+        let previous_data_dir = env::var_os("MEMORYWHALE_DATA_DIR");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dest = env::temp_dir().join(format!("mw-import-agent-{unique}"));
+        let src_dir = env::temp_dir().join(format!("mw-import-agent-src-{unique}"));
+        fs::create_dir_all(&dest).unwrap();
+        fs::create_dir_all(&src_dir).unwrap();
+        env::set_var("MEMORYWHALE_DATA_DIR", &dest);
+
+        struct Cleanup {
+            previous_data_dir: Option<std::ffi::OsString>,
+            dest: std::path::PathBuf,
+            src_dir: std::path::PathBuf,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                if let Some(value) = self.previous_data_dir.take() {
+                    env::set_var("MEMORYWHALE_DATA_DIR", value);
+                } else {
+                    env::remove_var("MEMORYWHALE_DATA_DIR");
+                }
+                let _ = fs::remove_dir_all(&self.dest);
+                let _ = fs::remove_dir_all(&self.src_dir);
+            }
+        }
+        let _cleanup = Cleanup {
+            previous_data_dir,
+            dest: dest.clone(),
+            src_dir: src_dir.clone(),
+        };
+
+        let dest_conn = open_session_db().unwrap();
+        dest_conn
+            .execute(
+                "INSERT INTO command_runs
+                 (command, argv_json, created_at, agent)
+                 VALUES ('duplicate', '[\"duplicate\"]', '2026-01-01T00:00:00Z', NULL)",
+                [],
+            )
+            .unwrap();
+        drop(dest_conn);
+
+        let src_db = src_dir.join("memorywhale.sqlite3");
+        let src_conn = Connection::open(&src_db).unwrap();
+        src_conn
+            .execute_batch(
+                "CREATE TABLE command_runs (
+                    id INTEGER PRIMARY KEY,
+                    command TEXT NOT NULL,
+                    argv_json TEXT NOT NULL,
+                    cwd TEXT,
+                    exit_code INTEGER,
+                    stdout TEXT DEFAULT '',
+                    stderr TEXT DEFAULT '',
+                    notes TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    agent TEXT
+                );
+                INSERT INTO command_runs
+                    (command, argv_json, created_at, agent)
+                VALUES
+                    ('claude-run', '[\"claude-run\"]', '2026-01-02T00:00:00Z', 'claude'),
+                    ('rho-run', '[\"rho-run\"]', '2026-01-03T00:00:00Z', 'rho'),
+                    ('forged-run', '[\"forged-run\"]', '2026-01-04T00:00:00Z', 'not-a-supported-agent'),
+                    ('secret-run', '[\"secret-run\"]', '2026-01-05T00:00:00Z', 'sk-live-secret'),
+                    ('duplicate', '[\"duplicate\"]', '2026-01-01T00:00:00Z', 'rho');",
+            )
+            .unwrap();
+        drop(src_conn);
+
+        import_sqlite(&src_db).unwrap();
+
+        let conn = Connection::open(dest.join("memorywhale.sqlite3")).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT command, agent FROM command_runs ORDER BY command")
+            .unwrap();
+        let rows: Vec<(String, Option<String>)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("claude-run".to_string(), Some("claude".to_string())),
+                ("duplicate".to_string(), Some("rho".to_string())),
+                ("forged-run".to_string(), None),
+                ("rho-run".to_string(), Some("rho".to_string())),
+                ("secret-run".to_string(), None),
+            ]
+        );
     }
 }
