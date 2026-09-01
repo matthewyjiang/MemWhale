@@ -444,6 +444,30 @@ fn api_limit(raw_path: &str) -> Result<usize, (&'static str, String)> {
     Ok(limit)
 }
 
+fn api_agent_filters(raw_path: &str) -> Result<Vec<String>, (&'static str, String)> {
+    let Some(value) = query_param(raw_path, "agent") else {
+        return Ok(Vec::new());
+    };
+    let term = format!("agent:{value}");
+    memorywhale_cli::parse_search_filters(&[term.as_str()])
+        .map(|(filters, _)| filters.agents)
+        .map_err(|error| api_error("400 Bad Request", "invalid_agent", &error))
+}
+
+fn inline_agent_filters(query: &str) -> Result<(String, Vec<String>), String> {
+    let mut text = Vec::new();
+    let mut agents = Vec::new();
+    for term in query.split_whitespace() {
+        if term.starts_with("agent:") {
+            let (filters, _) = memorywhale_cli::parse_search_filters(&[term])?;
+            agents.extend(filters.agents);
+        } else {
+            text.push(term);
+        }
+    }
+    Ok((text.join(" "), agents))
+}
+
 fn api_search(raw_path: &str) -> (&'static str, String) {
     let query = query_param(raw_path, "q").unwrap_or_default();
     if query.trim().is_empty() {
@@ -453,6 +477,14 @@ fn api_search(raw_path: &str) -> (&'static str, String) {
         Ok(limit) => limit,
         Err(response) => return response,
     };
+    let (search_query, mut agents) = match inline_agent_filters(&query) {
+        Ok(filters) => filters,
+        Err(error) => return api_error("400 Bad Request", "invalid_agent", &error),
+    };
+    match api_agent_filters(raw_path) {
+        Ok(mut explicit) => agents.append(&mut explicit),
+        Err(response) => return response,
+    }
     let conn = match api_open() {
         Ok(conn) => conn,
         Err(response) => return response,
@@ -463,10 +495,15 @@ fn api_search(raw_path: &str) -> (&'static str, String) {
             return api_error("503 Service Unavailable", "memory_load", &error.to_string())
         }
     };
+    let filters = memorywhale_cli::SearchFilters {
+        agents,
+        ..Default::default()
+    };
+    let memories = memorywhale_cli::filter_memories(memories, &filters);
     let engine = memorywhale_core::engine::BuiltinEngine::new(memories);
     let hits = memorywhale_core::engine::MemoryEngine::retrieve(
         &engine,
-        &memorywhale_core::Query::new(&query, Utc::now()),
+        &memorywhale_core::Query::new(&search_query, Utc::now()),
         limit,
     );
     let results: Vec<Value> = hits
@@ -474,12 +511,15 @@ fn api_search(raw_path: &str) -> (&'static str, String) {
         .map(|hit| {
             let reasons = hit.reasons();
             let (source, source_id) = memorywhale_core::sqlite::decode_id(hit.memory.id);
+            let agent = hit.memory.agent.clone();
             json!({
                 "id": hit.memory.id,
                 "source": source.tag(),
                 "source_id": source_id,
                 "command_id": (source == memorywhale_core::sqlite::Source::Command)
                     .then_some(source_id),
+                "agent": agent,
+                "agent_label": memorywhale_core::provenance::label(hit.memory.agent.as_deref()),
                 "score": hit.score,
                 "memory": hit.memory,
                 "signals": hit.signals,
@@ -526,6 +566,7 @@ type ApiCommandRow = (
     String,
     String,
     String,
+    Option<String>,
 );
 
 fn api_command(raw_id: &str) -> (&'static str, String) {
@@ -542,7 +583,7 @@ fn api_command(raw_id: &str) -> (&'static str, String) {
     };
     let row: Option<ApiCommandRow> = match conn
         .query_row(
-            "SELECT command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at
+            "SELECT command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at, agent
                  FROM command_runs WHERE id = ?1",
             params![id],
             |row| {
@@ -555,6 +596,7 @@ fn api_command(raw_id: &str) -> (&'static str, String) {
                     row.get(5)?,
                     row.get(6)?,
                     row.get(7)?,
+                    row.get(8)?,
                 ))
             },
         )
@@ -565,9 +607,17 @@ fn api_command(raw_id: &str) -> (&'static str, String) {
             return api_error("500 Internal Server Error", "database", &error.to_string())
         }
     };
-    let Some((command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at)) = row else {
+    let Some((command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at, agent)) = row
+    else {
         return api_error("404 Not Found", "not_found", "command was not found");
     };
+    if !memorywhale_core::provenance::is_valid(agent.as_deref()) {
+        return api_error(
+            "500 Internal Server Error",
+            "invalid_provenance",
+            "stored command provenance is invalid",
+        );
+    }
     let argv = serde_json::from_str::<Value>(&argv_json).unwrap_or(Value::Null);
     (
         "200 OK",
@@ -580,7 +630,9 @@ fn api_command(raw_id: &str) -> (&'static str, String) {
             "stdout": stdout,
             "stderr": stderr,
             "notes": notes,
-            "created_at": created_at
+            "created_at": created_at,
+            "agent": agent,
+            "agent_label": memorywhale_core::provenance::label(agent.as_deref())
         })),
     )
 }
@@ -1235,7 +1287,7 @@ fn dashboard(raw_path: &str) -> String {
     let mut gcount = 0usize;
     let mut first_group = true;
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, command, argv_json, exit_code, created_at, notes FROM command_runs ORDER BY created_at DESC, id DESC LIMIT 200",
+        "SELECT id, command, argv_json, exit_code, created_at, notes, agent FROM command_runs ORDER BY created_at DESC, id DESC LIMIT 200",
     ) {
         if let Ok(iter) = stmt.query_map([], |r| {
             Ok((
@@ -1245,10 +1297,14 @@ fn dashboard(raw_path: &str) -> String {
                 r.get::<_, Option<i64>>(3)?,
                 r.get::<_, String>(4)?,
                 r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
             ))
         }) {
             for row in iter.flatten() {
-                let (id, cmd, argv_json, code, at, notes) = row;
+                let (id, cmd, argv_json, code, at, notes, agent) = row;
+                if !memorywhale_core::provenance::is_valid(agent.as_deref()) {
+                    continue;
+                }
                 let day = fmt_date(&at);
                 if day != cur_date {
                     if !cur_date.is_empty() {
@@ -1263,11 +1319,12 @@ fn dashboard(raw_path: &str) -> String {
                 let ok = code == Some(0);
                 group.push_str(&format!(
                     "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
-                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>\n",
+                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span>{}<span class=\"note\">{}</span></a>\n",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
                     esc_redacted(&full),
                     esc(&fmt_time(&at)),
+                    agent_badge(agent.as_deref()),
                     esc_redacted(&notes)
                 ));
                 gcount += 1;
@@ -1530,21 +1587,82 @@ fn project_of(notes: &str) -> Option<String> {
     re.captures(notes).map(|c| c[1].to_string())
 }
 
+fn agent_label(agent: Option<&str>) -> &'static str {
+    memorywhale_core::provenance::label(agent)
+}
+
+fn agent_badge(agent: Option<&str>) -> String {
+    format!(
+        "<span class=\"agent\">agent:{}</span>",
+        esc(agent_label(agent))
+    )
+}
+
+fn dashboard_search_terms(query: &str) -> Result<(String, Vec<String>), String> {
+    let mut text = Vec::new();
+    let mut agents = Vec::new();
+    for term in query.split_whitespace() {
+        if term.starts_with("agent:") {
+            let (filters, _) = memorywhale_cli::parse_search_filters(&[term])?;
+            agents.extend(filters.agents);
+        } else {
+            text.push(term);
+        }
+    }
+    Ok((text.join(" "), agents))
+}
+
+fn agent_matches(agent: Option<&str>, wanted: &[String]) -> bool {
+    wanted.is_empty()
+        || wanted
+            .iter()
+            .any(|value| agent_label(agent) == value.as_str())
+}
+
 // Count how many command runs + sessions belong to each project tag.
 fn search_results(conn: &Connection, query: &str) -> String {
-    let needle = format!("%{}%", query.trim());
+    let (text_query, agents) = match dashboard_search_terms(query) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            return format!(
+                "<h2>Search results</h2><div class=\"list\"><p class=\"empty\">{}</p></div>\n",
+                esc(&error)
+            )
+        }
+    };
+    let needle = format!("%{}%", text_query.trim());
     let mut out = String::new();
     let mut rows = 0;
     out.push_str("<h2>Search results</h2>\n<div class=\"list\">\n");
 
-    if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, command, argv_json, exit_code, created_at, notes, stdout, stderr
+    let mut command_sql = String::from(
+        "SELECT id, command, argv_json, exit_code, created_at, notes, stdout, stderr, agent
          FROM command_runs
-         WHERE command LIKE ?1 OR argv_json LIKE ?1 OR IFNULL(cwd, '') LIKE ?1
-            OR stdout LIKE ?1 OR stderr LIKE ?1 OR notes LIKE ?1
-         ORDER BY id DESC LIMIT 40",
-    ) {
-        if let Ok(iter) = stmt.query_map(params![needle.as_str()], |r| {
+         WHERE (command LIKE ?1 OR argv_json LIKE ?1 OR IFNULL(cwd, '') LIKE ?1
+            OR stdout LIKE ?1 OR stderr LIKE ?1 OR notes LIKE ?1)
+           AND (agent IS NULL OR agent IN ('claude', 'rho'))",
+    );
+    let mut command_params = vec![needle.clone()];
+    if !agents.is_empty() {
+        let clauses: Vec<String> = agents
+            .iter()
+            .map(|agent| {
+                if agent == "terminal" {
+                    "agent IS NULL".to_string()
+                } else {
+                    command_params.push(agent.clone());
+                    format!("agent = ?{}", command_params.len())
+                }
+            })
+            .collect();
+        command_sql.push_str(" AND (");
+        command_sql.push_str(&clauses.join(" OR "));
+        command_sql.push(')');
+    }
+    command_sql.push_str(" ORDER BY id DESC LIMIT 40");
+
+    if let Ok(mut stmt) = conn.prepare(&command_sql) {
+        if let Ok(iter) = stmt.query_map(rusqlite::params_from_iter(command_params.iter()), |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
@@ -1554,19 +1672,27 @@ fn search_results(conn: &Connection, query: &str) -> String {
                 r.get::<_, String>(5)?,
                 r.get::<_, String>(6)?,
                 r.get::<_, String>(7)?,
+                r.get::<_, Option<String>>(8)?,
             ))
         }) {
             for row in iter.flatten() {
-                let (id, cmd, argv_json, code, at, notes, stdout, stderr) = row;
+                let (id, cmd, argv_json, code, at, notes, stdout, stderr, agent) = row;
+                if !memorywhale_core::provenance::is_valid(agent.as_deref()) {
+                    continue;
+                }
+                if !agent_matches(agent.as_deref(), &agents) {
+                    continue;
+                }
                 let ok = code == Some(0);
                 let tags = error_tags(&format!("{stdout}\n{stderr}"));
                 out.push_str(&format!(
                     "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
-                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{} {}</span></a>\n",
+                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{} {} {}</span></a>\n",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
                     esc_redacted(&full_command(&argv_json, &cmd)),
                     esc(&fmt_datetime(&at)),
+                    agent_badge(agent.as_deref()),
                     tag_pills(&tags),
                     esc_redacted(&notes)
                 ));
@@ -1595,6 +1721,9 @@ fn search_results(conn: &Connection, query: &str) -> String {
         }) {
             for row in iter.flatten() {
                 let (id, started_at, ended_at, bytes, notes, status, transcript) = row;
+                if !agents.is_empty() && !agents.iter().any(|wanted| wanted == agent_label(None)) {
+                    continue;
+                }
                 let tags = error_tags(&transcript);
                 let mut row_html = session_row(id, &started_at, &ended_at, bytes, &notes, &status);
                 if !tags.is_empty() {
@@ -1621,6 +1750,9 @@ fn search_results(conn: &Connection, query: &str) -> String {
             ))
         }) {
             for (id, label, cwd, created_at) in iter.flatten() {
+                if !agent_matches(None, &agents) {
+                    continue;
+                }
                 out.push_str(&format!(
                     "<div class=\"row\"><span class=\"badge sess\">mark</span><span class=\"cmd\">#{id}</span><span class=\"when\">{}</span><span class=\"note\">{} {}</span></div>\n",
                     esc(&fmt_datetime(&created_at)),
@@ -1878,9 +2010,9 @@ fn project_page(raw_name: &str) -> String {
 
     let mut items: Vec<(String, String)> = Vec::new(); // (timestamp, row html)
 
-    if let Ok(mut stmt) = conn
-        .prepare("SELECT id, command, argv_json, exit_code, created_at, notes FROM command_runs")
-    {
+    if let Ok(mut stmt) = conn.prepare(
+        "SELECT id, command, argv_json, exit_code, created_at, notes, agent FROM command_runs",
+    ) {
         if let Ok(it) = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
@@ -1889,19 +2021,24 @@ fn project_page(raw_name: &str) -> String {
                 r.get::<_, Option<i64>>(3)?,
                 r.get::<_, String>(4)?,
                 r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
             ))
         }) {
-            for (id, cmd, argv_json, code, at, notes) in it.flatten() {
+            for (id, cmd, argv_json, code, at, notes, agent) in it.flatten() {
+                if !memorywhale_core::provenance::is_valid(agent.as_deref()) {
+                    continue;
+                }
                 if project_of(&notes).as_deref() != Some(name.as_str()) {
                     continue;
                 }
                 let ok = code == Some(0);
                 let row = format!(
                     "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
-                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>",
+                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{} {}</span></a>",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&fmt_datetime(&at)), esc_redacted(&notes)
+                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&fmt_datetime(&at)),
+                    agent_badge(agent.as_deref()), esc_redacted(&notes)
                 );
                 items.push((at, row));
             }
@@ -1976,7 +2113,7 @@ fn repo_page(raw_id: &str, worktree: Option<String>, query: &str) -> String {
     let mut items: Vec<(String, String)> = Vec::new(); // (timestamp, row html)
 
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, command, argv_json, exit_code, created_at, notes, cwd,
+        "SELECT id, command, argv_json, exit_code, created_at, notes, cwd, agent,
                 repository_id, repository_name, worktree_root
          FROM command_runs",
     ) {
@@ -1992,11 +2129,15 @@ fn repo_page(raw_id: &str, worktree: Option<String>, query: &str) -> String {
                 r.get::<_, Option<String>>(7)?,
                 r.get::<_, Option<String>>(8)?,
                 r.get::<_, Option<String>>(9)?,
+                r.get::<_, Option<String>>(10)?,
             ))
         }) {
-            for (id, cmd, argv_json, code, at, notes, cwd, repo_id, _, worktree_root) in
+            for (id, cmd, argv_json, code, at, notes, cwd, agent, repo_id, _, worktree_root) in
                 it.flatten()
             {
+                if !memorywhale_core::provenance::is_valid(agent.as_deref()) {
+                    continue;
+                }
                 if repo_id.as_deref() != Some(repository_id.as_str())
                     || worktree
                         .as_deref()
@@ -2011,10 +2152,11 @@ fn repo_page(raw_id: &str, worktree: Option<String>, query: &str) -> String {
                 let ok = code == Some(0);
                 let row = format!(
                     "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
-                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>",
+                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span>{}<span class=\"note\">{}</span></a>",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&fmt_datetime(&at)), esc_redacted(&notes)
+                    esc_redacted(&full_command(&argv_json, &cmd)), esc(&fmt_datetime(&at)),
+                    agent_badge(agent.as_deref()), esc_redacted(&notes)
                 );
                 items.push((at, row));
             }
@@ -2138,7 +2280,7 @@ fn command_page(id: i64) -> Result<String, String> {
     let conn = open_db()?;
     let row = conn
         .query_row(
-            "SELECT command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at
+            "SELECT command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at, agent
              FROM command_runs WHERE id = ?1",
             params![id],
             |r| {
@@ -2151,13 +2293,17 @@ fn command_page(id: i64) -> Result<String, String> {
                     r.get::<_, String>(5)?,
                     r.get::<_, String>(6)?,
                     r.get::<_, String>(7)?,
+                    r.get::<_, Option<String>>(8)?,
                 ))
             },
         )
         .optional()
         .map_err(|e| format!("read command run: {e}"))?
         .ok_or_else(|| format!("no command run #{id}"))?;
-    let (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at) = row;
+    let (command, argv_json, cwd, exit_code, stdout, stderr, notes, created_at, agent) = row;
+    if !memorywhale_core::provenance::is_valid(agent.as_deref()) {
+        return Err("invalid stored agent provenance".to_string());
+    }
     let argv: Vec<String> =
         serde_json::from_str(&argv_json).unwrap_or_else(|_| vec![command.clone()]);
     let ok = exit_code == Some(0);
@@ -2183,6 +2329,10 @@ fn command_page(id: i64) -> Result<String, String> {
     if let Some(cwd) = &cwd {
         body.push_str(&format!("<div><span>cwd</span>{}</div>", esc(cwd)));
     }
+    body.push_str(&format!(
+        "<div><span>agent</span>{}</div>",
+        esc(agent_label(agent.as_deref()))
+    ));
     body.push_str(&format!(
         "<div><span>when</span>{}</div></div>\n",
         esc(&fmt_datetime(&created_at))
@@ -2528,7 +2678,7 @@ fn runs_page(raw: &str) -> String {
     body.push_str("<div class=\"list\">\n");
     let mut rows = 0;
     if let Ok(mut stmt) = conn.prepare(
-        "SELECT id, argv_json, exit_code, created_at, notes FROM command_runs WHERE command = ?1 ORDER BY id DESC",
+        "SELECT id, argv_json, exit_code, created_at, notes, agent FROM command_runs WHERE command = ?1 ORDER BY id DESC",
     ) {
         if let Ok(it) = stmt.query_map(params![name], |r| {
             Ok((
@@ -2537,16 +2687,21 @@ fn runs_page(raw: &str) -> String {
                 r.get::<_, Option<i64>>(2)?,
                 r.get::<_, String>(3)?,
                 r.get::<_, String>(4)?,
+                r.get::<_, Option<String>>(5)?,
             ))
         }) {
-            for (id, argv_json, code, at, notes) in it.flatten() {
+            for (id, argv_json, code, at, notes, agent) in it.flatten() {
+                if !memorywhale_core::provenance::is_valid(agent.as_deref()) {
+                    continue;
+                }
                 let ok = code == Some(0);
                 body.push_str(&format!(
                     "<a class=\"row\" href=\"/command/{id}\"><span class=\"badge {}\">{}</span>\
-                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{}</span></a>\n",
+                     <span class=\"cmd\">{}</span><span class=\"when\">{}</span><span class=\"note\">{} {}</span></a>\n",
                     if ok { "ok" } else { "bad" },
                     match code { Some(c) => format!("exit {c}"), None => "—".into() },
-                    esc_redacted(&full_command(&argv_json, &name)), esc(&fmt_datetime(&at)), esc_redacted(&notes)
+                    esc_redacted(&full_command(&argv_json, &name)), esc(&fmt_datetime(&at)),
+                    agent_badge(agent.as_deref()), esc_redacted(&notes)
                 ));
                 rows += 1;
             }
